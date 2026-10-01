@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Find Your Recipe</title>
+  <meta name="description" content="Stir the pot, get a random recipe from around the world, cook it, then find out if it was a 1-star flop or a 5-star feast.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%B2%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,800&family=Nunito:wght@400;600;700;800&family=Caveat:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="gingham" aria-hidden="true"></div>
+    <div class="header-inner">
+      <a class="brand" href="#/" aria-label="Find Your Recipe home">
+        <span class="brand-mark" aria-hidden="true">🍲</span>
+        <span class="brand-text">
+          <span class="brand-name">Find Your Recipe</span>
+          <span class="brand-tag">Stir the pot. Cook the mystery.</span>
+        </span>
+      </a>
+      <nav class="nav">
+        <a href="#/" data-nav="kitchen">Kitchen</a>
+        <a href="#/cookbook" data-nav="cookbook">My Cookbook <span class="badge" id="pendingBadge" hidden></span></a>
+        <button class="btn btn-small btn-ghost" id="accountBtn" type="button">Sign in</button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="demo-banner" id="demoBanner" hidden>
+    <strong>Demo kitchen:</strong> accounts and ratings are saved in this browser only.
+    Add Supabase keys in <code>js/config.js</code> to turn on real accounts.
+  </div>
+
+  <main id="main">
+    <!-- ============================================================ KITCHEN -->
+    <section class="view" id="view-kitchen">
+      <div class="kitchen-top">
+        <h1 class="hero-title">What's cooking <em>today</em>?</h1>
+        <p class="hero-sub">Stir the pot and get a random recipe from somewhere in the world. It could be a 5-star feast or a 1-star flop, and you won't know which until you've cooked it and rated it yourself.</p>
+
+        <div class="spoons" id="spoons" aria-live="polite">
+          <span class="spoons-label">Stirs left today</span>
+          <span class="spoon-row" id="spoonRow"></span>
+          <span class="spoons-reset" id="spoonsReset"></span>
+        </div>
+
+        <div class="mode-toggle" role="radiogroup" aria-label="Gamble mode">
+          <button type="button" role="radio" class="mode-btn" data-mode="gamble" aria-checked="true">
+            <span class="mode-emoji" aria-hidden="true">🎲</span> Full gamble
+          </button>
+          <button type="button" role="radio" class="mode-btn" data-mode="picky" aria-checked="false">
+            <span class="mode-emoji" aria-hidden="true">🧐</span> Picky eater
+          </button>
+        </div>
+
+        <form class="filters" id="filters" hidden>
+          <div class="filter-head">
+            <h2>Narrow down the pot</h2>
+            <button type="button" class="link-btn" id="resetFilters">Reset filters</button>
+          </div>
+          <div class="filter-grid">
+            <label class="field">
+              <span>Region</span>
+              <select id="f-region"></select>
+            </label>
+            <label class="field">
+              <span>Culture</span>
+              <select id="f-cuisine"></select>
+            </label>
+            <fieldset class="chips" data-filter="time"><legend>Time until it's on the table</legend></fieldset>
+            <fieldset class="chips" data-filter="course"><legend>Meal</legend></fieldset>
+            <fieldset class="chips" data-filter="diet"><legend>Diet</legend></fieldset>
+            <fieldset class="chips" data-filter="difficulty"><legend>Difficulty</legend></fieldset>
+            <fieldset class="chips" data-filter="protein"><legend>Main ingredient</legend></fieldset>
+          </div>
+          <p class="filter-note">Filters narrow down what's in the pot, but the star rating always stays a secret.</p>
+        </form>
+
+        <p class="pot-count" id="potCount" aria-live="polite">&nbsp;</p>
+
+        <button class="btn btn-start" id="startBtn" type="button">
+          <span class="start-label">Start cooking</span>
+        </button>
+        <p class="start-hint" id="startHint"></p>
+      </div>
+
+      <div class="pot-slot" id="potSlot">
+        <div class="pot-stage" id="potStage">
+          <button class="pot-btn" id="potBtn" type="button" aria-label="Start cooking" tabindex="-1">
+            <svg class="pot" id="pot" viewBox="0 -60 260 270" aria-hidden="true">
+              <defs>
+                <linearGradient id="potBody" x1="0" x2="1">
+                  <stop offset="0" stop-color="#8E2A1B"/>
+                  <stop offset=".35" stop-color="#C8442F"/>
+                  <stop offset=".6" stop-color="#D65A42"/>
+                  <stop offset="1" stop-color="#7E2416"/>
+                </linearGradient>
+                <radialGradient id="soup" cx=".5" cy=".4" r=".7">
+                  <stop offset="0" stop-color="#F6A53B"/>
+                  <stop offset="1" stop-color="#D9762A"/>
+                </radialGradient>
+                <linearGradient id="ladleGrad" x1="0" x2="1">
+                  <stop offset="0" stop-color="#9AA3A8"/>
+                  <stop offset=".5" stop-color="#E5EAEC"/>
+                  <stop offset="1" stop-color="#8A9398"/>
+                </linearGradient>
+                <clipPath id="soupClip"><ellipse cx="130" cy="86" rx="86" ry="17"/></clipPath>
+              </defs>
+
+              <!-- steam -->
+              <g class="steam" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round">
+                <path class="wisp w1" d="M95 40 q-12 -18 0 -36 q12 -18 0 -36"/>
+                <path class="wisp w2" d="M132 34 q-12 -18 0 -36 q12 -18 0 -36"/>
+                <path class="wisp w3" d="M168 40 q-12 -18 0 -36 q12 -18 0 -36"/>
+              </g>
+
+              <!-- burner -->
+              <g class="flames">
+                <path class="flame f1" d="M78 206 q8 -26 16 0 z"/>
+                <path class="flame f2" d="M110 206 q10 -32 20 0 z"/>
+                <path class="flame f3" d="M146 206 q10 -30 20 0 z"/>
+                <path class="flame f4" d="M180 206 q8 -24 16 0 z"/>
+              </g>
+              <rect x="60" y="203" width="140" height="7" rx="3.5" fill="#4A3226"/>
+
+              <!-- inside of the pot -->
+              <ellipse cx="130" cy="82" rx="96" ry="22" fill="#5E1A10"/>
+              <ellipse cx="130" cy="86" rx="86" ry="17" fill="url(#soup)"/>
+              <g clip-path="url(#soupClip)" class="bubbles" fill="#FBD38A" stroke="#E08A33" stroke-width="1.5">
+                <circle class="bubble b1" cx="88"  cy="88" r="6"/>
+                <circle class="bubble b2" cx="118" cy="80" r="5"/>
+                <circle class="bubble b3" cx="150" cy="92" r="7"/>
+                <circle class="bubble b4" cx="176" cy="84" r="5"/>
+                <circle class="bubble b5" cx="104" cy="94" r="4"/>
+                <circle class="bubble b6" cx="164" cy="78" r="4"/>
+                <circle class="bubble b7" cx="132" cy="90" r="5"/>
+              </g>
+
+              <!-- ladle (moved by JS) -->
+              <g id="ladle">
+                <ellipse id="ladleRipple" cx="0" cy="0" rx="14" ry="4" fill="none" stroke="#FBD38A" stroke-width="2" opacity=".8"/>
+                <line id="ladleHandle" x1="0" y1="0" x2="0" y2="0" stroke="url(#ladleGrad)" stroke-width="9" stroke-linecap="round"/>
+                <circle id="ladleHook" cx="0" cy="0" r="7" fill="none" stroke="#B9C1C5" stroke-width="5"/>
+              </g>
+
+              <!-- front of the pot -->
+              <path d="M34 82 A96 22 0 0 0 226 82 L218 168 Q216 192 190 194 L70 194 Q44 192 42 168 Z" fill="url(#potBody)"/>
+              <path d="M34 82 A96 22 0 0 0 226 82" fill="none" stroke="#F3D9C6" stroke-width="6" stroke-linecap="round"/>
+              <path d="M50 120 Q130 140 210 120" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="10" stroke-linecap="round"/>
+              <!-- handles -->
+              <path d="M34 98 q-26 -2 -26 16 q0 14 28 12" fill="none" stroke="#7E2416" stroke-width="9" stroke-linecap="round"/>
+              <path d="M226 98 q26 -2 26 16 q0 14 -28 12" fill="none" stroke="#7E2416" stroke-width="9" stroke-linecap="round"/>
+              <!-- little heart on the pot -->
+              <path d="M130 160 c-10 -8 -18 -14 -18 -22 c0 -6 5 -10 10 -10 c4 0 7 3 8 6 c1 -3 4 -6 8 -6 c5 0 10 4 10 10 c0 8 -8 14 -18 22 z" fill="#F3D9C6" opacity=".9"/>
+            </svg>
+          </button>
+          <p class="pot-caption" id="potCaption">Back to the kitchen</p>
+        </div>
+      </div>
+
+      <!-- recipe card -->
+      <article class="recipe-card" id="recipeCard" hidden aria-live="polite"></article>
+    </section>
+
+    <!-- ============================================================ COOKBOOK -->
+    <section class="view" id="view-cookbook" hidden>
+      <div class="cookbook-head">
+        <h1>My Cookbook</h1>
+        <p class="muted" id="cookbookWho"></p>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="pending" aria-selected="true">Waiting to be rated</button>
+        <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
+        <button class="tab" role="tab" data-tab="rated" aria-selected="false">Cooked &amp; rated</button>
+      </div>
+      <div class="recipe-list" id="recipeList"></div>
+    </section>
+
+    <!-- ============================================================ SINGLE RECIPE (from cookbook) -->
+    <section class="view" id="view-recipe" hidden>
+      <a href="#/cookbook" class="back-link">← Back to my cookbook</a>
+      <article class="recipe-card" id="recipeCardStatic"></article>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="gingham" aria-hidden="true"></div>
+    <p>Recipes come from <a href="https://www.themealdb.com" target="_blank" rel="noopener">TheMealDB</a> and the
+      <a href="https://en.wikibooks.org/wiki/Cookbook" target="_blank" rel="noopener">Wikibooks Cookbook</a> (CC BY-SA), with cultural notes from
+      <a href="https://www.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (CC BY-SA).
+      Every recipe links back to its original source, so you can rate it there too.</p>
+  </footer>
+
+  <!-- auth dialog -->
+  <dialog class="dialog" id="authDialog">
+    <form method="dialog" class="dialog-inner" id="authForm">
+      <button class="dialog-close" value="cancel" aria-label="Close" formnovalidate>×</button>
+      <h2 id="authTitle">Pull up a chair</h2>
+      <p class="muted" id="authSub">Sign in to stir the pot, save recipes and keep your cookbook.</p>
+      <div class="auth-fields"></div>
+      <p class="form-error" id="authError" role="alert"></p>
+      <button class="btn btn-primary btn-block" id="authSubmit" value="default">Sign in</button>
+      <p class="auth-switch" id="authSwitch"></p>
+    </form>
+  </dialog>
+
+  <!-- cook mode -->
+  <dialog class="cook-mode" id="cookMode">
+    <div class="cook-inner">
+      <header class="cook-head">
+        <span class="cook-title" id="cookTitle"></span>
+        <button class="btn btn-small btn-ghost" id="cookClose" type="button">Exit cook mode</button>
+      </header>
+      <div class="cook-progress"><div class="cook-bar" id="cookBar"></div></div>
+      <p class="cook-step-num" id="cookStepNum"></p>
+      <p class="cook-step" id="cookStep"></p>
+      <div class="cook-timers" id="cookTimers"></div>
+      <footer class="cook-nav">
+        <button class="btn btn-ghost" id="cookPrev" type="button">← Previous</button>
+        <button class="btn btn-primary" id="cookNext" type="button">Next step →</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- running timers -->
+  <div class="timer-dock" id="timerDock" aria-live="polite"></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
