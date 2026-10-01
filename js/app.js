@@ -1,7 +1,8 @@
 import { createStore } from './store.js';
 import { DAILY_LIMIT } from './config.js';
-import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, matches, regionsAndCuisines, formatMinutes } from './data.js';
+import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, DIET_LABEL, allergenNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
 import { cultureFor } from './cultures.js';
+import { convertText, defaultSystem } from './units.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -30,7 +31,6 @@ function toast(msg, ms = 3200) {
 
 const COURSE_LABEL = { breakfast: 'Breakfast', main: 'Main dish', soup: 'Soup & stew', side: 'Side / snack', dessert: 'Dessert' };
 const DIFF_LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
-const DIET_LABEL = { 1: 'Vegetarian', 2: 'Vegan' };
 
 const SPOON_SVG = `<svg class="spoon" viewBox="0 0 32 32" aria-hidden="true">
   <ellipse cx="11" cy="11" rx="7" ry="9" transform="rotate(-45 11 11)" fill="#C98B4E" stroke="#8A5A2B" stroke-width="1.5"/>
@@ -43,7 +43,8 @@ const state = {
   user: null,
   index: [],
   mode: lsGet('fyr:mode', 'gamble'),
-  filters: { ...DEFAULT_FILTERS, ...lsGet('fyr:filters', {}) },
+  filters: { ...DEFAULT_FILTERS, ...lsGet('fyr:filters:v2', {}) },
+  units: lsGet('fyr:units', null) || defaultSystem(),
   usedToday: 0,
   draws: [],           // [{recipe_id, created_at}]
   ratings: {},         // recipe_id -> {stars, note}
@@ -266,7 +267,24 @@ async function onAuthSubmit(e) {
 // ------------------------------------------------------------------ filters
 
 function buildFilters() {
-  for (const fs of $$('.chips')) {
+  const avoid = $('#avoidChips');
+  for (const [key, , label] of ALLERGENS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip chip-avoid';
+    b.dataset.value = key;
+    b.textContent = label;
+    avoid.append(b);
+  }
+  avoid.addEventListener('click', e => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const set = new Set(state.filters.avoid || []);
+    set.has(chip.dataset.value) ? set.delete(chip.dataset.value) : set.add(chip.dataset.value);
+    setFilter('avoid', [...set]);
+  });
+
+  for (const fs of $$('.chips[data-filter]')) {
     const key = fs.dataset.filter;
     for (const [value, label] of FILTERS[key]) {
       const b = document.createElement('button');
@@ -313,17 +331,19 @@ function setFilter(key, value) {
   syncFilterUI();
 }
 
-function saveFilters() { lsSet('fyr:filters', state.filters); }
+function saveFilters() { lsSet('fyr:filters:v2', state.filters); }
 
 function syncFilterUI() {
   const picky = state.mode === 'picky';
   $('#filters').hidden = !picky;
   $$('.mode-btn').forEach(b => b.setAttribute('aria-checked', String(b.dataset.mode === state.mode)));
 
-  for (const fs of $$('.chips')) {
+  for (const fs of $$('.chips[data-filter]')) {
     const key = fs.dataset.filter;
     $$('.chip', fs).forEach(c => c.setAttribute('aria-pressed', String(c.dataset.value === state.filters[key])));
   }
+  const avoid = new Set(state.filters.avoid || []);
+  $$('#avoidChips .chip').forEach(c => c.setAttribute('aria-pressed', String(avoid.has(c.dataset.value))));
   $('#f-region').value = state.filters.region;
 
   // cuisine list depends on region
@@ -530,6 +550,39 @@ function withTimers(escapedText) {
   });
 }
 
+function timeHTML(r) {
+  const t = r.time || { prep: r.minutes, cook: 0, passive: 0 };
+  const why = [].concat(t.passiveWhy || []);
+  const parts = [`<span><b>Prep</b> ${formatMinutes(t.prep)}</span>`];
+  if (t.cook) parts.push(`<span><b>Cook</b> ${formatMinutes(t.cook)}</span>`);
+  if (t.passive) parts.push(`<span><b>Hands-off</b> ${formatMinutes(t.passive)}${why.length ? ` <i>(${esc(why.join(', '))})</i>` : ''}</span>`);
+  return `
+    <div class="time-box">
+      <div class="time-total">⏱ ${r.timeEstimated ? '≈ ' : ''}${esc(formatMinutes(r.minutes))} <small>total</small></div>
+      <div class="time-parts">${parts.join('')}</div>
+    </div>`;
+}
+
+function ingredientHTML(ing, i, scale) {
+  const opts = { system: state.units, scale, scaleBare: true, context: ing.item };
+  const qty = ing.qty ? `<span class="qty">${convertText(esc(ing.qty), opts)}</span> ` : '';
+  const item = ing.qty ? esc(ing.item) : convertText(esc(ing.item), { ...opts, leadingOnly: true });
+  return `<li><label><input type="checkbox" data-ing="${i}"><span>${qty}${item}</span></label></li>`;
+}
+
+function stepHTML(step) {
+  return withTimers(convertText(esc(step), { system: state.units }));
+}
+
+function renderAmounts(card, r, scale, checked) {
+  $('.ingredients', card).innerHTML = r.ingredients.map((ing, i) => ingredientHTML(ing, i, scale)).join('');
+  $$('[data-ing]', card).forEach(cb => { cb.checked = checked.has(Number(cb.dataset.ing)); });
+  $('.steps', card).innerHTML = r.steps.map(s => `<li>${stepHTML(s)}</li>`).join('');
+  $('.scale-note', card).hidden = scale === 1;
+  $$('[data-units]', card).forEach(b => b.setAttribute('aria-checked', String(b.dataset.units === state.units)));
+  $$('[data-scale]', card).forEach(b => b.setAttribute('aria-checked', String(Number(b.dataset.scale) === scale)));
+}
+
 function starsHTML(avg) {
   let out = '';
   for (let i = 1; i <= 5; i++) out += `<span class="${avg >= i - 0.25 ? 'on' : 'off'}">★</span>`;
@@ -544,17 +597,15 @@ function recipeCardHTML(r, { fresh = false } = {}) {
   const tags = [
     place && `<li class="tag">🌍 ${esc(place)}</li>`,
     `<li class="tag">🍽 ${esc(COURSE_LABEL[r.course] || 'Dish')}</li>`,
-    `<li class="tag">⏱ ${r.timeEstimated ? '≈ ' : ''}${esc(formatMinutes(r.minutes))}</li>`,
+    r.servings && `<li class="tag">👥 Serves ${esc(r.servings)}</li>`,
     `<li class="tag red">🔥 ${esc(DIFF_LABEL[r.difficulty] || r.difficulty)}</li>`,
     DIET_LABEL[r.diet] && `<li class="tag green">🌱 ${DIET_LABEL[r.diet]}</li>`
   ].filter(Boolean).join('');
+  const contains = allergenNames(r.allergens || 0);
 
   const via = r.via && r.via.name !== r.source?.name ? ` · via <a href="${esc(safeUrl(r.via.url))}" target="_blank" rel="noopener">${esc(r.via.name)}</a>` : '';
   const saved = state.saved.has(r.id);
 
-  const ingredients = r.ingredients.map((ing, i) => `
-    <li><label><input type="checkbox" data-ing="${i}"><span>${ing.qty ? `<span class="qty">${esc(ing.qty)}</span> ` : ''}${esc(ing.item)}</span></label></li>`).join('');
-  const steps = r.steps.map(s => `<li>${withTimers(esc(s))}</li>`).join('');
   const cultureSrc = culture.source
     ? `<p class="src">Source: <a href="${esc(safeUrl(culture.source.url))}" target="_blank" rel="noopener">${esc(culture.source.name)}</a></p>`
     : `<p class="src">About ${esc(culture.label)}</p>`;
@@ -568,6 +619,7 @@ function recipeCardHTML(r, { fresh = false } = {}) {
         <h2 class="card-title">${esc(r.name)}</h2>
         <p class="card-author">by <strong>${esc(r.author)}</strong>${source ? ` · <a href="${esc(source)}" target="_blank" rel="noopener">original recipe ↗</a>` : ''}${via}</p>
         <ul class="tags">${tags}</ul>
+        ${timeHTML(r)}
         <div class="rating-slot"></div>
         <div class="card-actions">
           <button type="button" class="btn btn-small btn-ghost save-btn" aria-pressed="${saved}">${saved ? '♥ Saved' : '♡ Save'}</button>
@@ -584,12 +636,25 @@ function recipeCardHTML(r, { fresh = false } = {}) {
       </section>
       <section class="card-section">
         <h3>🧺 Ingredients <span class="muted" style="font-size:15px;font-family:var(--font-body)">(${r.ingredients.length}, tap to check off)</span></h3>
-        <ul class="ingredients">${ingredients}</ul>
+        <div class="ing-tools">
+          <div class="seg" role="radiogroup" aria-label="Units">
+            <button type="button" class="seg-btn" data-units="us" aria-checked="${state.units === 'us'}" role="radio">US (cups, oz, °F)</button>
+            <button type="button" class="seg-btn" data-units="metric" aria-checked="${state.units === 'metric'}" role="radio">Metric (g, ml, °C)</button>
+          </div>
+          <div class="seg" role="radiogroup" aria-label="Batch size">
+            ${[0.5, 1, 2, 3].map(s => `<button type="button" class="seg-btn" data-scale="${s}" aria-checked="${s === 1}" role="radio">${s === 0.5 ? '½' : s}×</button>`).join('')}
+          </div>
+        </div>
+        <p class="allergens ${contains.length ? '' : 'none'}">${contains.length
+          ? `⚠️ <strong>Contains:</strong> ${contains.map(esc).join(', ')}`
+          : '✅ None of the common allergens were detected'} <span class="muted">(detected automatically, so double-check the list)</span></p>
+        <ul class="ingredients"></ul>
+        <p class="muted scale-note" hidden style="font-size:14px">Amounts in the ingredient list are scaled. Amounts mentioned in the method are for the original batch.</p>
       </section>
       <section class="card-section">
         <h3>🥄 Method</h3>
-        <ol class="steps">${steps}</ol>
-        ${r.timeEstimated ? `<p class="muted" style="font-size:14px">⏱ The total time is estimated from the steps above.</p>` : ''}
+        <ol class="steps"></ol>
+        ${r.timeEstimated ? `<p class="muted" style="font-size:14px">⏱ Times are estimated from the steps above.</p>` : ''}
         ${safeUrl(r.youtube) ? `<p><a href="${esc(r.youtube)}" target="_blank" rel="noopener">▶ Watch a video of this recipe</a></p>` : ''}
       </section>
       <div class="rate-slot"></div>
@@ -618,7 +683,7 @@ function wireRecipeCard(card, r) {
   $('.cook-btn', card).addEventListener('click', () => openCookMode(r));
   $('.print-btn', card).addEventListener('click', () => window.print());
   $('.copy-btn', card).addEventListener('click', async () => {
-    const text = `${r.name}\n\n` + r.ingredients.map(i => `- ${i.qty ? i.qty + ' ' : ''}${i.item}`).join('\n');
+    const text = `${r.name}\n\n` + $$('.ingredients li', card).map(li => `- ${li.textContent.trim().replace(/\s+/g, ' ')}`).join('\n');
     try { await navigator.clipboard.writeText(text); toast('Shopping list copied!'); }
     catch { toast('Could not copy. Your browser blocked it.'); }
   });
@@ -626,12 +691,20 @@ function wireRecipeCard(card, r) {
   // Remember ingredient checkboxes per recipe.
   const key = `fyr:checked:${r.id}`;
   const checked = new Set(lsGet(key, []));
-  $$('[data-ing]', card).forEach(cb => {
-    cb.checked = checked.has(Number(cb.dataset.ing));
-    cb.addEventListener('change', () => {
-      cb.checked ? checked.add(Number(cb.dataset.ing)) : checked.delete(Number(cb.dataset.ing));
-      lsSet(key, [...checked]);
-    });
+  let scale = 1;
+  renderAmounts(card, r, scale, checked);
+  $('.ingredients', card).addEventListener('change', e => {
+    const cb = e.target.closest('[data-ing]');
+    if (!cb) return;
+    cb.checked ? checked.add(Number(cb.dataset.ing)) : checked.delete(Number(cb.dataset.ing));
+    lsSet(key, [...checked]);
+  });
+  $('.ing-tools', card).addEventListener('click', e => {
+    const u = e.target.closest('[data-units]');
+    const s = e.target.closest('[data-scale]');
+    if (u) { state.units = u.dataset.units; lsSet('fyr:units', state.units); }
+    if (s) scale = Number(s.dataset.scale);
+    if (u || s) renderAmounts(card, r, scale, checked);
   });
 
   card.addEventListener('click', e => {
@@ -865,7 +938,7 @@ function showCookStep(i) {
   const steps = cook.recipe.steps;
   cook.i = Math.max(0, Math.min(i, steps.length - 1));
   $('#cookStepNum').textContent = `Step ${cook.i + 1} of ${steps.length}`;
-  $('#cookStep').innerHTML = withTimers(esc(steps[cook.i]));
+  $('#cookStep').innerHTML = stepHTML(steps[cook.i]);
   $('#cookBar').style.width = `${((cook.i + 1) / steps.length) * 100}%`;
   $('#cookPrev').disabled = cook.i === 0;
   $('#cookNext').textContent = cook.i === steps.length - 1 ? 'Finish 🎉' : 'Next step →';

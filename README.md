@@ -6,7 +6,9 @@ Bored and hungry? Stir the pot and get a **random recipe from around the world**
 
 - **Start cooking**: the pot boils, the ladle stirs, the pot drops to the bottom of the screen and a mystery recipe pops up.
 - **3 stirs per day** per account, so nobody can reroll until they find something safe.
-- **Full gamble** mode uses every recipe. **Picky eater** mode filters by region, culture, time until it's on the table, meal, diet, difficulty and main ingredient.
+- **Full gamble** mode uses every recipe. **Picky eater** mode filters by region, culture, total time, hands-on time, meal, diet (pescatarian / vegetarian / vegan), allergies and things to avoid (gluten, dairy, eggs, peanuts, tree nuts, fish, shellfish, soy, sesame, pork, alcohol), difficulty and main ingredient.
+- **Timing** is split into prep, cook and hands-off time (marinating, chilling, rising...), estimated from each step when the source doesn't give a time.
+- **US / Metric toggle** converts grams, ml, cups, ounces and oven temperatures (common baking ingredients go to cups and spoons by weight), plus a ½× to 3× batch scaler.
 - Every recipe shows the **name, author, full ingredient list and method**, a **cultural-significance note**, and a **link to the original source** so you can review it there too.
 - **Hidden rating**: stars stay a mystery until you rate the dish. Then you see the community rating, how you compare, and a verdict (Jackpot! / Brave soul / ...).
 - **My Cookbook**: dishes waiting to be rated, saved favorites, and your cooked-and-rated history with stats.

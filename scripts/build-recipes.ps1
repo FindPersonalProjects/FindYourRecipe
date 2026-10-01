@@ -88,32 +88,174 @@ function Parse-Minutes([string]$text) {
 
 # ---------------------------------------------------------------- classification
 
-$MeatWords = @('chicken','beef','pork','lamb','mutton','goat','bacon','ham','sausage','chorizo','prosciutto','pancetta',
-  'salami','pepperoni','turkey','duck','veal','venison','fish','salmon','tuna','cod','haddock','anchovy','anchovies','prawn','shrimp',
-  'crab','lobster','mussel','clam','oyster','scallop','squid','octopus','gelatin','gelatine','lard','suet','meat','steak',
-  'brisket','rib','liver','kidney','oxtail','rabbit','pheasant','quail','goose','pigeon','mackerel','sardine','trout',
-  'herring','kipper','monkfish','sea bass','bream','plaice','halibut','tilapia','catfish','carp','eel','caviar','roe',
-  'dashi','bonito','worcestershire','chicken stock','beef stock','gravy','frankfurter','hot dog','spam','pastrami',
-  'jamon','guanciale','andouille','kielbasa','mortadella','snail','frog','crawfish','crayfish','langoustine','calamari',
-  'tilefish','swordfish','snapper','whitebait','pollock','hake','bresaola','biltong','boerewors','merguez','offal','tripe')
-$AnimalWords = @('egg','milk','butter','cream','cheese','yogurt','yoghurt','honey','ghee','parmesan','mozzarella','cheddar',
-  'feta','ricotta','mascarpone','paneer','buttermilk','condensed','custard','mayonnaise','whey','fraiche','fraîche',
-  'gruyere','gruyère','brie','camembert','stilton','gorgonzola','halloumi','pecorino','quark','kefir','lassi','curd')
-$PlantSafe = @('eggplant','butternut','peanut butter','almond butter','cocoa butter','nut butter','coconut milk','almond milk',
-  'soy milk','soya milk','oat milk','rice milk','coconut cream','vegan','cream of tartar','butter beans','butterhead',
-  'buttercup','cashew cream','plant milk','bean curd','fish-free')
+$SeaWords = @('fish','salmon','tuna','cod','haddock','anchovy','anchovies','prawn','shrimp','crab','lobster','mussel','clam',
+  'oyster','scallop','squid','octopus','mackerel','sardine','trout','herring','kipper','monkfish','sea bass','bream','plaice',
+  'halibut','tilapia','catfish','carp','eel','caviar','roe','dashi','bonito','worcestershire','crawfish','crayfish',
+  'langoustine','calamari','tilefish','swordfish','snapper','whitebait','pollock','hake','cockle','whelk','sole','pilchard',
+  'saltfish','bacalao','bacalhau','surimi','katsuobushi')
+$LandMeatWords = @('chicken','beef','pork','lamb','mutton','goat','bacon','ham','sausage','chorizo','prosciutto','pancetta',
+  'salami','pepperoni','turkey','duck','veal','venison','gelatin','gelatine','lard','suet','meat','steak','mince',
+  'brisket','rib','liver','kidney','oxtail','rabbit','pheasant','quail','goose','pigeon','gravy','frankfurter','hot dog',
+  'spam','pastrami','jamon','guanciale','andouille','kielbasa','mortadella','snail','escargot','frog','bresaola','biltong',
+  'boerewors','merguez','offal','tripe','bone marrow','chicken stock','beef stock','bouillon cube','stock cube','maggi',
+  'giblet','sweetbread','tongue','trotter','hock','pâté','pate','foie gras','black pudding','haggis','corned beef','jerky')
+$DairyEggWords = @('egg','yolk','milk','butter','cream','cheese','yogurt','yoghurt','honey','ghee','parmesan','mozzarella',
+  'cheddar','feta','ricotta','mascarpone','paneer','buttermilk','condensed','custard','mayonnaise','mayo','whey','fraiche',
+  'fraîche','gruyere','gruyère','brie','camembert','stilton','gorgonzola','halloumi','pecorino','quark','kefir','lassi','curd',
+  'meringue','labneh','skyr','evaporated','ice cream','aioli','hollandaise')
+# Phrases that contain an animal word but are plant-based.
+$PlantSafe = @('eggplant','butternut','peanut butter','almond butter','cocoa butter','nut butter','cashew butter','coconut milk',
+  'almond milk','soy milk','soya milk','oat milk','rice milk','coconut cream','vegan','cream of tartar','butter beans',
+  'butterhead','buttercup','cashew cream','plant milk','bean curd','fish-free','mushroom stock','vegetable stock',
+  'vegetable bouillon','vegan mayo','oyster mushroom','coconut yogurt','coconut yoghurt','dairy-free','dairy free',
+  'egg-free','eggless','beef tomato','mincemeat','minced garlic','minced ginger','minced onion','vegetarian sausage',
+  'meat-free','meatless','jackfruit','celery rib','rib of celery','ribs of celery','celery ribs')
 
 function Test-Words([string]$text, [string[]]$words) {
   foreach ($w in $words) { if ($text -match ('\b' + [regex]::Escape($w) + '(s|es)?\b')) { return $true } }
   return $false
 }
 
+function Normalize-Ingredients([string[]]$items) {
+  return (($items -join ' | ').ToLower()) -replace "goat'?s? (cheese|milk|curd|yogh?urt)", 'cheese' -replace "sheep'?s? (cheese|milk)", 'cheese' -replace "’", "'"
+}
+
+function Remove-Phrases([string]$t, [string[]]$phrases) {
+  foreach ($p in $phrases) { $t = $t.Replace($p, ' ') }
+  return $t
+}
+
+# 0 = contains land meat, 1 = pescatarian, 2 = vegetarian, 3 = vegan
 function Get-Diet([string[]]$items) {
-  $t = (($items -join ' | ').ToLower()) -replace "goat'?s? (cheese|milk|curd|yogh?urt)", 'cheese' -replace "sheep'?s? (cheese|milk)", 'cheese' -replace 'beef tomato', 'tomato'
-  foreach ($p in $PlantSafe) { $t = $t.Replace($p, ' ') }
-  if (Test-Words $t $MeatWords) { return 0 }
-  if (Test-Words $t $AnimalWords) { return 1 }
-  return 2
+  $t = Remove-Phrases (Normalize-Ingredients $items) $PlantSafe
+  if (Test-Words $t $LandMeatWords) { return 0 }
+  if (Test-Words $t $SeaWords) { return 1 }
+  if (Test-Words $t $DairyEggWords) { return 2 }
+  return 3
+}
+
+# Allergen / avoid flags. Bit order must match js/data.js ALLERGENS.
+$Allergens = [ordered]@{
+  gluten = @{ bit = 1; words = @('flour','wheat','bread','breadcrumb','crumb','pasta','spaghetti','noodle','macaroni','penne',
+      'linguine','lasagne','lasagna','fettuccine','tagliatelle','ravioli','tortellini','gnocchi','couscous','bulgur','bulgar',
+      'barley','rye','semolina','seitan','soy sauce','beer','malt','pastry','tortilla','pitta','pita','naan','chapati','roti',
+      'cracker','biscuit','cake','oat','oatmeal','farro','spelt','orzo','udon','ramen','panko','wonton','filo','phyllo','digestive',
+      'croissant','brioche','bun','baguette','ciabatta','focaccia','muffin','self-raising','self raising','vermicelli','cookie',
+      'crouton','stuffing','graham','matzo','bran','durum','freekeh','hoisin','sponge','wafer','pretzel','bagel','dumpling wrapper',
+      'gyoza wrapper','puff','shortcrust','fregola','pierogi','stout','ale','lager','teriyaki','bisquick')
+    except = @('rice flour','corn flour','cornflour','almond flour','coconut flour','chickpea flour','gram flour','tapioca flour',
+      'potato flour','buckwheat flour','cassava flour','gluten-free','gluten free','rice noodle','glass noodle','rice vermicelli',
+      'rice paper','rice cake','tamari','corn tortilla','oat milk','ginger ale','gluten-free soy sauce','cornbread') }
+  dairy = @{ bit = 2; words = @('milk','butter','cream','cheese','yogurt','yoghurt','ghee','whey','buttermilk','condensed',
+      'custard','ice cream','paneer','fraiche','fraîche','kefir','lassi','curd','quark','mascarpone','ricotta','parmesan',
+      'mozzarella','cheddar','feta','gruyere','gruyère','brie','camembert','stilton','gorgonzola','halloumi','pecorino','labneh',
+      'skyr','evaporated','casein','dulce de leche','queso','burrata','emmental','manchego','provolone','ghee','béchamel','bechamel')
+    except = @('coconut milk','almond milk','soy milk','soya milk','oat milk','rice milk','coconut cream','peanut butter',
+      'almond butter','cocoa butter','nut butter','cashew butter','cream of tartar','butter beans','butterhead','buttercup',
+      'butternut','cashew cream','plant milk','bean curd','dairy-free','dairy free','vegan','coconut yogurt','coconut yoghurt','cream crackers') }
+  egg = @{ bit = 4; words = @('egg','yolk','mayonnaise','mayo','meringue','aioli','albumen','hollandaise','custard','egg noodle')
+    except = @('eggplant','egg-free','eggless','vegan mayo') }
+  peanut = @{ bit = 8; words = @('peanut','groundnut','satay','monkey nut'); except = @() }
+  treenut = @{ bit = 16; words = @('almond','walnut','pecan','cashew','pistachio','hazelnut','macadamia','brazil nut','pine nut',
+      'chestnut','marzipan','praline','nutella','frangipane','amaretti','nut','pignoli','gianduja')
+    except = @('nutmeg','butternut','coconut','doughnut','donut','peanut','water chestnut','groundnut','nutritional yeast','monkey nut') }
+  fish = @{ bit = 32; words = @('fish','salmon','tuna','cod','haddock','anchovy','anchovies','mackerel','sardine','trout','herring',
+      'kipper','monkfish','sea bass','bream','plaice','halibut','tilapia','catfish','carp','eel','caviar','roe','dashi','bonito',
+      'worcestershire','tilefish','swordfish','snapper','whitebait','pollock','hake','sole','pilchard','saltfish','bacalao',
+      'bacalhau','katsuobushi','surimi')
+    except = @('fish-free','shellfish') }
+  shellfish = @{ bit = 64; words = @('shrimp','prawn','crab','lobster','crayfish','crawfish','langoustine','mussel','clam','oyster',
+      'scallop','squid','octopus','calamari','cockle','whelk','shellfish','seafood','surimi')
+    except = @('oyster mushroom') }
+  soy = @{ bit = 128; words = @('soy','soya','tofu','tempeh','edamame','miso','tamari','bean curd','natto','tvp','teriyaki','hoisin')
+    except = @() }
+  sesame = @{ bit = 256; words = @('sesame','tahini','halva','halvah','zaatar',"za'atar",'gomasio','benne'); except = @() }
+  pork = @{ bit = 512; words = @('pork','bacon','ham','sausage','chorizo','pancetta','prosciutto','lard','gelatin','gelatine',
+      'salami','pepperoni','guanciale','jamon','andouille','kielbasa','mortadella','spam','hot dog','frankfurter','trotter',
+      'hock','black pudding','crackling','speck','nduja')
+    except = @('vegetarian sausage','vegan sausage','chicken sausage','turkey sausage','beef sausage','lamb sausage','turkey bacon','beef bacon') }
+  alcohol = @{ bit = 1024; words = @('wine','beer','rum','vodka','brandy','whisky','whiskey','sherry','sake','mirin','liqueur',
+      'cognac','tequila','gin','port','marsala','kirsch','amaretto','bourbon','stout','ale','lager','champagne','prosecco',
+      'vermouth','calvados','grand marnier','cointreau','triple sec','shaoxing','madeira','cider','schnapps','grappa','ouzo',
+      'raki','baileys','kahlua','limoncello','cachaça','cachaca','pisco','soju','absinthe','bitters')
+    except = @('wine vinegar','rice vinegar','cider vinegar','sherry vinegar','malt vinegar','rice wine vinegar','ginger ale','ginger beer','root beer','non-alcoholic','alcohol-free','apple cider vinegar') }
+}
+
+function Get-AllergenMask([string[]]$items) {
+  $base = Normalize-Ingredients $items
+  $mask = 0
+  foreach ($a in $Allergens.Values) {
+    $t = Remove-Phrases $base $a.except
+    if (Test-Words $t $a.words) { $mask = $mask -bor $a.bit }
+  }
+  return $mask
+}
+
+# ---------------------------------------------------------------- timing
+
+$PassiveRx = '\bmarinat|\bchill|refrigerat|\bfridge|\bfreez|\brest(ing)?\b(?! of)|\bprove\b|\bproof|\brise\b|\brisen\b|\bsoak|' +
+             'ferment|leave (it |them |to )?(to )?(stand|set|cool|rest|rise)|until set|stand for|let (it |them )?(stand|cool|sit|rest)|' +
+             '\bcool\b|overnight|\bsteep|\binfuse|\bcure\b|\bsettle'
+$StorageRx = 'keep(s)? (for|in|up)|\bstore|will last|lasts|make ahead|can be made|in advance|freezes well|airtight|up to \d+ (days?|weeks?|months?)'
+$OptionalRx = '^\s*(if|alternatively|optionally|tip|note|for a)\b|\bif you (use|want|prefer|like|have|are)|you can (also )?(use|make|substitute|swap)|to get a more|instead of'
+$ParallelRx = '^\s*(meanwhile|while)\b|in the meantime|at the same time'
+$CookVerbRx = '\b(bake|fry|boil|simmer|roast|grill|saut[eé]|cook|stew|braise|steam|poach|toast|broil|sear|brown)'
+$PassiveNames = [ordered]@{ 'marinat' = 'marinating'; 'proof|prove|rise|risen' = 'rising'; 'soak' = 'soaking';
+  'freez' = 'freezing'; 'chill|fridge|refrigerat|until set' = 'chilling'; 'ferment' = 'fermenting'; 'rest|stand|sit' = 'resting';
+  'cool' = 'cooling'; 'steep|infuse' = 'steeping'; 'cure' = 'curing' }
+
+function Get-Timing([string[]]$steps, $ingredients) {
+  $active = 0.0; $passive = 0.0; $why = New-Object System.Collections.ArrayList
+  $rx = '(\d+(?:\.\d+)?)\s*(?:(?:-|–|to|or)\s*(\d+(?:\.\d+)?))?\s*(days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)\b'
+  foreach ($step in $steps) {
+    $s0 = ($step.ToLower() -replace '½', '.5' -replace '¼', '.25' -replace '¾', '.75' -replace '(\d)\s+\.(\d)', '$1.$2')
+    foreach ($s in [regex]::Split($s0, '(?<=[.!?;])\s+')) {
+      if ($s -match $StorageRx -or $s -match $OptionalRx) { continue }
+      $parallel = $s -match $ParallelRx
+      $isPassive = $s -match $PassiveRx
+      $found = $false
+      foreach ($m in [regex]::Matches($s, $rx)) {
+        $before = $s.Substring([Math]::Max(0, $m.Index - 12), [Math]::Min(12, $m.Index))
+        if ($before -match '\bevery\b|\beach\b(?! side)') { continue }
+        $v = [double]$m.Groups[1].Value
+        if ($m.Groups[2].Success) { $v = [double]$m.Groups[2].Value }
+        $u = $m.Groups[3].Value
+        $mins = if ($u -like 'd*') { $v * 1440 } elseif ($u -like 'h*') { $v * 60 } elseif ($u -like 's*') { $v / 60 } else { $v }
+        if ($u -like 'd*' -and -not $isPassive) { continue }
+        $after = $s.Substring($m.Index + $m.Length, [Math]::Min(18, $s.Length - $m.Index - $m.Length))
+        if ($after -match '^\s*(on |per |a )?(each |a )?side') { $mins *= 2 }
+        if ($mins -gt 4320) { continue }   # more than 3 days is almost always storage advice
+        $found = $true
+        if ($isPassive) { $passive += $mins } elseif (-not $parallel) { $active += $mins }
+      }
+      if ($isPassive -and -not $found -and $s -match 'overnight') { $passive += 480; $found = $true }
+      if ($isPassive -and $found) {
+        foreach ($k in $PassiveNames.Keys) { if ($s -match $k) { if (-not $why.Contains($PassiveNames[$k])) { [void]$why.Add($PassiveNames[$k]) }; break } }
+      }
+    }
+  }
+  $all = ($steps -join ' ').ToLower()
+  if ($active -lt 5 -and $all -match $CookVerbRx) { $active = [Math]::Min(45, 10 + 3 * $steps.Count) }
+
+  $chop = 0
+  foreach ($i in $ingredients) { if (("$($i.qty) $($i.item)") -match '(?i)chop|dice|slice|mince|grate|peel|shred|crush|julienne|cube') { $chop++ } }
+  $prep = [Math]::Min(50, 5 + 1.5 * $ingredients.Count + 1.5 * $chop)
+
+  return [ordered]@{
+    prep    = Round5 $prep
+    cook    = if ($active -gt 0) { Round5 $active } else { 0 }
+    passive = if ($passive -gt 0) { Round5 $passive } else { 0 }
+    passiveWhy = @($why | Select-Object -First 2)
+  }
+}
+
+function Normalize-Qty([string]$q) {
+  $q = Clean-Text $q
+  $q = $q -replace '(?i)\b(tblsp|tbls|tbsps|tbs|tbl|tablespoons?)\b\.?', 'tbsp' -replace '(?i)\b(tspn|tsps|teaspoons?)\b\.?', 'tsp'
+  $q = $q -replace '(?i)\bhandfull\b', 'handful' -replace '(?i)\bgrams?\b', 'g' -replace '(?i)\b(millilitres?|milliliters?)\b', 'ml'
+  $q = $q -replace '(?i)\b(litres?|liters?)\b', 'L' -replace '(?i)\bkilos?\b|\bkilograms?\b', 'kg'
+  $q = $q -replace '(?i)\b(\d+(?:\.\d+)?)\s*(?=(g|kg|ml|L|oz|lb)\b)', '$1 '
+  return $q.Trim()
 }
 
 function Get-Protein([string]$category, [string[]]$items, [int]$diet, [string]$name) {
@@ -125,7 +267,7 @@ function Get-Protein([string]$category, [string[]]$items, [int]$diet, [string]$n
     'Pork'    { return 'pork' }
     'Lamb'    { return 'lamb' }
     'Goat'    { return 'lamb' }
-    'Pasta'   { if ($diet -gt 0) { return 'pasta' } }
+    'Pasta'   { if ($diet -ge 2) { return 'pasta' } }
   }
   $groups = [ordered]@{
     seafood = @('fish','salmon','tuna','cod','haddock','prawn','shrimp','crab','lobster','mussel','clam','oyster','scallop','squid','octopus','mackerel','sardine','trout','anchovy','anchovies','calamari','snapper','hake')
@@ -143,7 +285,7 @@ function Get-Protein([string]$category, [string[]]$items, [int]$diet, [string]$n
       foreach ($g in $groups.Keys) { if (Test-Words $part $groups[$g]) { return $g } }
     }
   }
-  if ($diet -gt 0) {
+  if ($diet -ge 2) {
     if (Test-Words $t @('pasta','spaghetti','noodle','macaroni','penne','linguine','lasagne','lasagna','fettuccine','tagliatelle','ravioli','gnocchi')) { return 'pasta' }
     return 'veggie'
   }
@@ -280,7 +422,7 @@ foreach ($m in $meals.Values) {
   $ingredients = @()
   for ($i = 1; $i -le 20; $i++) {
     $item = Clean-Text $m."strIngredient$i"
-    $qty  = Clean-Text $m."strMeasure$i"
+    $qty  = Normalize-Qty $m."strMeasure$i"
     if ($item) { $ingredients += ,([ordered]@{ item = $item; qty = $qty }) }
   }
   if ($ingredients.Count -lt 2) { continue }
@@ -312,12 +454,12 @@ foreach ($m in $meals.Values) {
   $cat     = '' + $m.strCategory
   $course  = switch ($cat) { 'Breakfast' { 'breakfast' } 'Dessert' { 'dessert' } 'Side' { 'side' } 'Starter' { 'side' } default { 'main' } }
   if ($course -eq 'main' -and $m.strMeal -match '(?i)\b(soup|chowder|broth|bisque|ramen|pho|gazpacho|borscht)\b') { $course = 'soup' }
-  if ($cat -eq 'Vegan') { $diet = 2 } elseif ($cat -eq 'Vegetarian' -and $diet -eq 0) { $diet = 1 }
+  if ($cat -eq 'Vegan') { $diet = 3 } elseif ($cat -eq 'Vegetarian' -and $diet -lt 2) { $diet = 2 }
   $country = Clean-Text $m.strCountry
   $cuisine = Get-Cuisine (Clean-Text $m.strArea) $country
 
-  $cook    = Parse-Minutes $raw
-  $minutes = Round5 (10 + 2 * $ingredients.Count + $cook)
+  $timing  = Get-Timing $steps $ingredients
+  $minutes = $timing.prep + $timing.cook + $timing.passive
 
   $sourceUrl = ('' + $m.strSource).Trim()
   $mealPage  = "https://www.themealdb.com/meal/$($m.idMeal)"
@@ -343,9 +485,12 @@ foreach ($m in $meals.Values) {
     course      = $course
     protein     = Get-Protein $cat $items $diet $m.strMeal
     diet        = $diet
+    allergens   = Get-AllergenMask $items
     minutes     = $minutes
+    time        = $timing
     timeEstimated = $true
-    difficulty  = Get-Difficulty $ingredients.Count $steps.Count $minutes
+    servings    = ''
+    difficulty  = Get-Difficulty $ingredients.Count $steps.Count ($timing.prep + $timing.cook)
     ingredients = @($ingredients)
     steps       = @($steps)
     tags        = @((('' + $m.strTags) -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -446,43 +591,70 @@ if (-not $SkipWikibooks) {
       if (-not $ingKey -or -not $stepKey) { continue }
 
       $ingredients = @()
+      # Wiki tables put a row's cells either on one line ("| a || b") or one per line,
+      # with rows separated by "|-". Collect cells until the row ends.
+      $rowCells = New-Object System.Collections.ArrayList
+      $flushRow = {
+        $cells = @($rowCells | ForEach-Object { Clean-Wiki $_ } |
+          Where-Object { $_ -and $_ -notmatch '^[-–—]$|^n/?a$|%\s*$' })
+        $rowCells.Clear()
+        if ($cells.Count -ge 1 -and $cells[0] -notmatch '^(total|ingredients?)$') {
+          $qty = ''
+          if ($cells.Count -gt 1) { $qty = Normalize-Qty ($cells[1..($cells.Count - 1)] -join ' / ') }
+          $script:ingredientsOut += ,([ordered]@{ item = $cells[0]; qty = $qty })
+        }
+      }
+      $script:ingredientsOut = @()
       foreach ($line in ($sections[$ingKey] -split "`n")) {
         $line = $line.Trim()
         if ($line -match '^\*+\s*(.+)$') {
-          $txt = Clean-Wiki $Matches[1]
-          if ($txt.Length -gt 1) { $ingredients += ,([ordered]@{ item = $txt; qty = '' }) }
-        } elseif ($line -match '^\|(?![-}])' -and $line -notmatch '^\|\s*$') {
-          $cells = ($line.TrimStart('|') -split '\|\|') | ForEach-Object { Clean-Wiki $_ }
-          $cells = @($cells | Where-Object { $_ -and $_ -notmatch '^[-–—]$' })
-          if ($cells.Count -ge 1) {
-            $qty = ''
-            if ($cells.Count -gt 1) { $qty = ($cells[1..($cells.Count - 1)] -join ' / ') }
-            $ingredients += ,([ordered]@{ item = $cells[0]; qty = $qty })
-          }
+          $txt = Normalize-Qty (Clean-Wiki $Matches[1])
+          if ($txt.Length -gt 1) { $script:ingredientsOut += ,([ordered]@{ item = $txt; qty = '' }) }
+        } elseif ($line -match '^\|[-}]' -or $line -match '^\{\|') {
+          if ($rowCells.Count) { & $flushRow }
+        } elseif ($line -match '^\|' -and $line -notmatch '^\|\s*$') {
+          foreach ($c in ($line.TrimStart('|') -split '\|\|')) { [void]$rowCells.Add($c) }
         }
       }
+      if ($rowCells.Count) { & $flushRow }
+      $ingredients = $script:ingredientsOut
       $steps = @()
       foreach ($line in ($sections[$stepKey] -split "`n")) {
         if ($line.Trim() -match '^[#*]+\s*(.+)$') {
-          $txt = Clean-Wiki $Matches[1]
+          $txt = Normalize-Qty (Clean-Wiki $Matches[1])
           if ($txt.Length -gt 3) { $steps += $txt }
         }
       }
       if ($ingredients.Count -lt 3 -or $steps.Count -lt 2) { continue }
 
       $name = $p.title -replace '^Cookbook:', ''
-      $timeStr = Get-TemplateParam $wt 'time'
-      $minutes = Parse-Minutes $timeStr
-      $estimated = $false
-      if ($minutes -le 0) { $minutes = 10 + 2 * $ingredients.Count + (Parse-Minutes ($steps -join ' ')); $estimated = $true }
-      $minutes = Round5 $minutes
+      $timing = Get-Timing $steps $ingredients
+      $stated = Parse-Minutes (Get-TemplateParam $wt 'time')
+      $estimated = $stated -le 0
+      if ($estimated) {
+        $minutes = $timing.prep + $timing.cook + $timing.passive
+      } else {
+        # Trust the recipe's own total; fit the estimated breakdown inside it.
+        $minutes = Round5 $stated
+        $hands = $timing.prep + $timing.cook
+        if ($hands -ge $minutes) {
+          $timing.prep = [int][Math]::Max(5, [Math]::Round($minutes * $timing.prep / [Math]::Max(1, $hands) / 5) * 5)
+          $timing.cook = [int][Math]::Max(0, $minutes - $timing.prep)
+          $timing.passive = 0; $timing.passiveWhy = @()
+        } else {
+          $timing.passive = [int][Math]::Min($timing.passive, $minutes - $hands)
+          if ($timing.passive -eq 0) { $timing.passiveWhy = @() }
+          $timing.cook = [int]($minutes - $timing.prep - $timing.passive)
+        }
+      }
+      $servings = (Clean-Wiki (Get-TemplateParam $wt 'servings')) -replace '[^\w\s\-–/]', ''
 
       $diffNum = 0
       [void][int]::TryParse((Get-TemplateParam $wt 'difficulty'), [ref]$diffNum)
       if ($diffNum -ge 1) {
         $difficulty = if ($diffNum -le 2) { 'easy' } elseif ($diffNum -eq 3) { 'medium' } else { 'hard' }
       } else {
-        $difficulty = Get-Difficulty $ingredients.Count $steps.Count $minutes
+        $difficulty = Get-Difficulty $ingredients.Count $steps.Count ($timing.prep + $timing.cook)
       }
 
       $catText = ($cats -join ' | ')
@@ -520,8 +692,11 @@ if (-not $SkipWikibooks) {
         course      = $course
         protein     = Get-Protein '' $items $diet $name
         diet        = $diet
+        allergens   = Get-AllergenMask $items
         minutes     = $minutes
+        time        = $timing
         timeEstimated = $estimated
+        servings    = $servings
         difficulty  = $difficulty
         ingredients = @($ingredients)
         steps       = @($steps)
@@ -547,7 +722,7 @@ foreach ($r in $recipes) {
   [IO.File]::WriteAllText((Join-Path $RecDir "$($r.id).json"), $json, $Utf8)
   [void]$index.Add([ordered]@{
     id = $r.id; n = $r.name; c = $r.cuisine; g = $r.region; k = $r.course; p = $r.protein
-    t = $r.minutes; d = $r.difficulty; v = $r.diet
+    t = $r.minutes; h = $r.time.prep + $r.time.cook; d = $r.difficulty; v = $r.diet; x = $r.allergens
   })
 }
 $meta = [ordered]@{ generated = (Get-Date).ToString('yyyy-MM-dd'); count = $index.Count; recipes = @($index) }

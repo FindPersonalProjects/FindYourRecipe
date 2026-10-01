@@ -172,6 +172,9 @@ main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 24px 16
 .chip:hover { border-color: var(--butter); }
 .chip[aria-pressed="true"] { background: var(--basil); border-color: var(--basil); color: #fff; }
 .filter-note { font-size: 14px; color: var(--muted); margin: 14px 0 0; }
+.legend-note { font-weight: 600; opacity: .8; }
+.chip-avoid[aria-pressed="true"] { background: var(--tomato); border-color: var(--tomato); color: #fff; }
+.chip-avoid[aria-pressed="true"]::before { content: "🚫 "; }
 
 .pot-count { margin: 18px 0 8px; font-family: var(--font-hand); font-size: 24px; color: var(--basil); min-height: 1.5em; }
 
@@ -268,6 +271,27 @@ body.has-dock .pot-slot { min-height: 0; margin: 0; }
 }
 .tag.green { background: var(--basil-soft); color: var(--basil); }
 .tag.red { background: var(--tomato-soft); color: var(--tomato-dark); }
+
+.time-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 14px;
+  padding: 10px 14px; border-radius: 14px; background: #fff; border: 1px solid var(--line);
+}
+.time-total { font-family: var(--font-head); font-weight: 800; font-size: 20px; color: var(--cocoa); }
+.time-total small { font-family: var(--font-body); font-weight: 700; font-size: 13px; color: var(--muted); }
+.time-parts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 14px; color: var(--muted); }
+.time-parts b { color: var(--cocoa); }
+.time-parts i { font-style: normal; }
+
+.ing-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 10px; }
+.seg { display: inline-flex; background: var(--cream); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.seg-btn {
+  border: 0; background: transparent; font: inherit; font-size: 14px; font-weight: 800; color: var(--muted);
+  padding: 5px 12px; border-radius: 999px; cursor: pointer;
+}
+.seg-btn[aria-checked="true"] { background: var(--basil); color: #fff; }
+.allergens { font-size: 14px; margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; background: var(--tomato-soft); }
+.allergens.none { background: var(--basil-soft); }
+.conv { border-bottom: 1px dotted currentColor; cursor: help; }
 
 .mystery {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px;
@@ -449,7 +473,7 @@ body.has-dock .pot-slot { min-height: 0; margin: 0; }
 }
 
 @media print {
-  .site-header, .site-footer, .demo-banner, .kitchen-top, .pot-slot, .card-actions, .rate-box, .timer-dock, .back-link, .section-tools { display: none !important; }
+  .site-header, .site-footer, .demo-banner, .kitchen-top, .pot-slot, .card-actions, .rate-box, .timer-dock, .back-link, .section-tools, .ing-tools { display: none !important; }
   body { background: #fff; }
   .recipe-card { box-shadow: none; border: 0; }
   .ingredients input { display: none; }

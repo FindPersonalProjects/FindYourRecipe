@@ -73,13 +73,16 @@
               <span>Culture</span>
               <select id="f-cuisine"></select>
             </label>
-            <fieldset class="chips" data-filter="time"><legend>Time until it's on the table</legend></fieldset>
+            <fieldset class="chips" data-filter="time"><legend>Total time until it's on the table <span class="legend-note">(includes marinating, chilling, rising)</span></legend></fieldset>
+            <fieldset class="chips" data-filter="hands"><legend>Hands-on time <span class="legend-note">(actual work in the kitchen)</span></legend></fieldset>
             <fieldset class="chips" data-filter="course"><legend>Meal</legend></fieldset>
             <fieldset class="chips" data-filter="diet"><legend>Diet</legend></fieldset>
+            <fieldset class="chips chips-avoid" id="avoidChips"><legend>Allergies &amp; things to avoid <span class="legend-note">(pick any)</span></legend></fieldset>
             <fieldset class="chips" data-filter="difficulty"><legend>Difficulty</legend></fieldset>
             <fieldset class="chips" data-filter="protein"><legend>Main ingredient</legend></fieldset>
           </div>
-          <p class="filter-note">Filters narrow down what's in the pot, but the star rating always stays a secret.</p>
+          <p class="filter-note">Filters narrow down what's in the pot, but the star rating always stays a secret.
+            Allergens are detected automatically from ingredient names, so <strong>always check the ingredient list</strong> if an allergy is serious.</p>
         </form>
 
         <p class="pot-count" id="potCount" aria-live="polite">&nbsp;</p>
