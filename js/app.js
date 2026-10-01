@@ -1,5 +1,5 @@
 import { createStore } from './store.js';
-import { DAILY_LIMIT } from './config.js';
+import { DAILY_LIMIT, FEEDBACK_ISSUES_URL } from './config.js';
 import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, LIFESTYLES, DIET_LABEL, allergenNames, lifestyleNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
 import { cultureFor } from './cultures.js';
 import { convertText, defaultSystem } from './units.js';
@@ -79,6 +79,7 @@ async function boot() {
   wireKitchen();
   wireAuth();
   wireCookMode();
+  wireFeedback();
   setInterval(tickClock, 30000);
 
   await refreshUserData();
@@ -124,6 +125,11 @@ function route() {
     $('#view-recipe').hidden = false;
     setDocked(false, false);
     renderStaticRecipe(decodeURIComponent(id));
+  } else if (page === 'feedback') {
+    $('#view-feedback').hidden = false;
+    $('[data-nav="feedback"]').setAttribute('aria-current', 'page');
+    setDocked(false, false);
+    openFeedback(id ? decodeURIComponent(id) : null);
   } else {
     $('#view-kitchen').hidden = false;
     $('[data-nav="kitchen"]').setAttribute('aria-current', 'page');
@@ -676,6 +682,7 @@ function recipeCardHTML(r, { fresh = false } = {}) {
         ${safeUrl(r.youtube) ? `<p><a href="${esc(r.youtube)}" target="_blank" rel="noopener">▶ Watch a video of this recipe</a></p>` : ''}
       </section>
       <div class="rate-slot"></div>
+      <p class="report-line"><a href="#/feedback/${encodeURIComponent(r.id)}">🚩 Report a problem with this recipe</a> (wrong measurements, confusing steps, missing allergens…)</p>
       <p class="muted" style="font-size:13px;margin-top:22px">Recipe from ${esc(r.source?.name || 'the web')}${r.license === 'CC BY-SA 4.0' ? ', shared under CC BY-SA 4.0' : ''}. Loved it or hated it? ${source ? `<a href="${esc(source)}" target="_blank" rel="noopener">Leave a review on the original page too.</a>` : ''}</p>
     </div>`;
 }
@@ -920,6 +927,96 @@ async function renderStaticRecipe(id) {
   } catch {
     card.innerHTML = `<p class="empty">Could not load this recipe.</p>`;
   }
+}
+
+// ------------------------------------------------------------------ feedback
+
+const feedback = { recipeId: null, recipeName: '' };
+
+async function openFeedback(recipeId) {
+  const form = $('#feedbackForm');
+  form.hidden = false;
+  $('#feedbackDone').hidden = true;
+  $('#feedbackError').textContent = '';
+  feedback.recipeId = recipeId;
+  feedback.recipeName = '';
+  $('#feedbackRecipe').hidden = !recipeId;
+  if (recipeId) {
+    form.topic.value = 'recipe';
+    try {
+      feedback.recipeName = (await getRecipe(recipeId)).name;
+      $('#feedbackRecipeName').textContent = feedback.recipeName;
+    } catch {
+      feedback.recipeId = null;
+      $('#feedbackRecipe').hidden = true;
+    }
+  }
+  if (state.user?.email && !form.email.value) form.email.value = state.user.email;
+}
+
+function wireFeedback() {
+  const form = $('#feedbackForm');
+  $('#feedbackRecipeClear').addEventListener('click', () => {
+    feedback.recipeId = null;
+    $('#feedbackRecipe').hidden = true;
+  });
+  $('#feedbackAgain').addEventListener('click', () => {
+    form.reset();
+    location.hash = '#/feedback';
+    openFeedback(null);
+  });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = $('#feedbackError');
+    const fd = new FormData(form);
+    if (fd.get('website')) return;                      // spam trap
+    const message = String(fd.get('message') || '').trim();
+    const email = String(fd.get('email') || '').trim();
+    if (message.length < 5) { err.textContent = 'Write a little more so we know what you mean.'; return; }
+    if (email && !form.email.checkValidity()) { err.textContent = "That email address doesn't look right."; return; }
+
+    const entry = {
+      mood: fd.get('mood') ? Number(fd.get('mood')) : null,
+      topic: fd.get('topic'),
+      message,
+      email: email || null,
+      recipe_id: feedback.recipeId
+    };
+    const btn = $('button[type=submit]', form);
+    btn.disabled = true;
+    err.textContent = '';
+    try {
+      const { delivered } = await state.store.sendFeedback(entry);
+      form.hidden = true;
+      $('#feedbackDone').hidden = false;
+      const link = $('#feedbackIssueLink');
+      if (delivered) {
+        $('#feedbackDoneText').textContent = 'Your feedback is in the pot. It really helps make the site better.';
+        link.hidden = true;
+      } else {
+        // No database yet: hand the visitor a pre-filled public GitHub issue (without their email).
+        $('#feedbackDoneText').textContent = "This site can't store feedback yet. To make sure it reaches the cook, post it as a GitHub issue (it opens pre-filled; a free GitHub account is needed). Your email is not included because issues are public.";
+        const moods = ['', '😞', '🙁', '😐', '🙂', '😍'];
+        const topicLabel = form.topic.selectedOptions[0].textContent;
+        const body = [
+          `**Experience:** ${entry.mood ? moods[entry.mood] : 'not given'}`,
+          `**Topic:** ${topicLabel}`,
+          feedback.recipeId ? `**Recipe:** ${feedback.recipeName} (\`${feedback.recipeId}\`)` : '',
+          '', message
+        ].filter(s => s !== null).join('\n');
+        const short = { general: 'General', recipe: 'Recipe problem', bug: 'Bug', idea: 'Idea', other: 'Other' }[entry.topic] || 'Feedback';
+        const title = `${short}${feedback.recipeName ? `: ${feedback.recipeName}` : ''}`;
+        link.href = `${FEEDBACK_ISSUES_URL}?title=${encodeURIComponent(title.slice(0, 120))}&body=${encodeURIComponent(body)}&labels=feedback`;
+        link.hidden = false;
+      }
+      form.reset();
+    } catch {
+      err.textContent = 'Could not send your feedback. Please try again in a moment.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 // ------------------------------------------------------------------ cook mode

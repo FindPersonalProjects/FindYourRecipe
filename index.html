@@ -27,6 +27,7 @@
       <nav class="nav">
         <a href="#/" data-nav="kitchen">Kitchen</a>
         <a href="#/cookbook" data-nav="cookbook">My Cookbook <span class="badge" id="pendingBadge" hidden></span></a>
+        <a href="#/feedback" data-nav="feedback">Feedback</a>
         <button class="btn btn-small btn-ghost" id="accountBtn" type="button">Sign in</button>
       </nav>
     </div>
@@ -193,6 +194,65 @@
     <section class="view" id="view-recipe" hidden>
       <a href="#/cookbook" class="back-link">← Back to my cookbook</a>
       <article class="recipe-card" id="recipeCardStatic"></article>
+    </section>
+
+    <!-- ============================================================ FEEDBACK -->
+    <section class="view" id="view-feedback" hidden>
+      <div class="feedback-wrap">
+        <h1>Tell us how it went</h1>
+        <p class="muted">Loved a recipe, hit a bug, spotted a wrong measurement, or have an idea? Every message is read.</p>
+
+        <form class="feedback-card" id="feedbackForm" novalidate>
+          <fieldset class="mood" role="radiogroup" aria-label="How is your experience so far?">
+            <legend>How's your experience so far?</legend>
+            <label><input type="radio" name="mood" value="1"><span title="Not good">😞</span></label>
+            <label><input type="radio" name="mood" value="2"><span title="Meh">🙁</span></label>
+            <label><input type="radio" name="mood" value="3"><span title="Okay">😐</span></label>
+            <label><input type="radio" name="mood" value="4"><span title="Good">🙂</span></label>
+            <label><input type="radio" name="mood" value="5"><span title="Love it">😍</span></label>
+          </fieldset>
+
+          <label class="field">
+            <span>What's it about?</span>
+            <select name="topic">
+              <option value="general">General thoughts</option>
+              <option value="recipe">A problem with a recipe (measurements, wording, allergens…)</option>
+              <option value="bug">Something is broken</option>
+              <option value="idea">A feature idea</option>
+              <option value="other">Something else</option>
+            </select>
+          </label>
+
+          <div class="feedback-recipe" id="feedbackRecipe" hidden>
+            About the recipe: <strong id="feedbackRecipeName"></strong>
+            <button type="button" class="link-btn" id="feedbackRecipeClear">(not this one)</button>
+          </div>
+
+          <label class="field">
+            <span>Your message</span>
+            <textarea name="message" required minlength="5" maxlength="2000" rows="6"
+              placeholder="What happened, what did you like, what should change?"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Email <span class="legend-note">(optional, only if you'd like a reply)</span></span>
+            <input type="email" name="email" maxlength="200" autocomplete="email">
+          </label>
+
+          <!-- spam trap: real people never see or fill this -->
+          <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+          <p class="form-error" id="feedbackError" role="alert"></p>
+          <button class="btn btn-primary" type="submit">Send feedback</button>
+        </form>
+
+        <div class="feedback-card feedback-done" id="feedbackDone" hidden>
+          <p class="reveal-badge">Thank you! 🍲</p>
+          <p id="feedbackDoneText">Your feedback is in the pot. It really helps make the site better.</p>
+          <a class="btn btn-ghost" id="feedbackIssueLink" target="_blank" rel="noopener" hidden>Open it on GitHub ↗</a>
+          <button type="button" class="btn btn-ghost" id="feedbackAgain">Send more feedback</button>
+        </div>
+      </div>
     </section>
   </main>
 

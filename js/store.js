@@ -122,6 +122,12 @@ class SupabaseStore {
     return data;
   }
 
+  async sendFeedback(fb) {
+    const { error } = await this.sb.from('feedback').insert(fb);
+    if (error) throw friendly(error);
+    return { delivered: true };
+  }
+
   async setSaved(recipeId, on) {
     const q = on
       ? this.sb.from('saved_recipes').upsert({ recipe_id: recipeId })
@@ -219,6 +225,9 @@ class LocalStore {
   }
 
   async saved() { return this.#me().saved.map(s => ({ ...s })); }
+
+  // Demo mode has no server to receive feedback; the page offers a GitHub issue instead.
+  async sendFeedback() { return { delivered: false }; }
 
   async setSaved(recipeId, on) {
     const me = this.#me();

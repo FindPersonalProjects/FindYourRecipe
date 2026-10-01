@@ -38,12 +38,31 @@ create table if not exists public.ratings (
 );
 create index if not exists ratings_recipe on public.ratings (recipe_id);
 
+-- Visitor feedback. Anyone can send; nobody can read it through the site.
+-- Read it in the Supabase dashboard: Table Editor -> feedback.
+create table if not exists public.feedback (
+  id         bigint generated always as identity primary key,
+  user_id    uuid references auth.users on delete set null default auth.uid(),
+  mood       int  check (mood between 1 and 5),
+  topic      text not null default 'general' check (topic in ('general', 'recipe', 'bug', 'idea', 'other')),
+  message    text not null check (char_length(message) between 5 and 2000),
+  email      text check (email is null or char_length(email) <= 200),
+  recipe_id  text check (recipe_id is null or char_length(recipe_id) <= 100),
+  created_at timestamptz not null default now()
+);
+
 -- ------------------------------------------------------------------ row level security
 
 alter table public.profiles      enable row level security;
 alter table public.draws         enable row level security;
 alter table public.saved_recipes enable row level security;
 alter table public.ratings       enable row level security;
+alter table public.feedback      enable row level security;
+
+drop policy if exists "anyone can send feedback" on public.feedback;
+create policy "anyone can send feedback" on public.feedback for insert to anon, authenticated
+  with check (user_id is null or user_id = auth.uid());
+grant insert on public.feedback to anon, authenticated;
 
 drop policy if exists "own profile read"   on public.profiles;
 drop policy if exists "own profile write"  on public.profiles;

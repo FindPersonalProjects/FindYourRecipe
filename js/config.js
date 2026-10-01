@@ -6,3 +6,6 @@ export const SUPABASE_URL = '';
 export const SUPABASE_ANON_KEY = '';
 
 export const DAILY_LIMIT = 3;
+
+// Until Supabase is connected, feedback can't be stored; the form offers a pre-filled GitHub issue here instead.
+export const FEEDBACK_ISSUES_URL = 'https://github.com/FindPersonalProjects/FindYourRecipe/issues/new';

@@ -61,3 +61,9 @@ Then open http://localhost:8080.
 ## Deploying
 
 Pushing to `main` deploys to GitHub Pages through `.github/workflows/jekyll-gh-pages.yml`. In the repo's **Settings → Pages**, set **Source** to **GitHub Actions**.
+
+## Reading feedback
+
+The **Feedback** page (and the "Report a problem with this recipe" link on every card) saves messages to the `feedback` table once Supabase is connected: open your Supabase project → **Table Editor** → `feedback`. Visitors can send feedback but can't read anyone else's.
+
+Until Supabase is connected, the form offers visitors a pre-filled GitHub issue on this repo instead (their email is left out because issues are public).
