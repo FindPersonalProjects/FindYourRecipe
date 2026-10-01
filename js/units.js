@@ -23,6 +23,7 @@ const UNIT_PATTERNS = [
   ['pint', String.raw`pints?|pt`],
   ['quart', String.raw`quarts?|qts?`],
   ['stick', String.raw`sticks?`],
+  ['gill', String.raw`gills?`],
   ['tbsp', String.raw`tbsp|tablespoons?`],
   ['tsp', String.raw`tsp|teaspoons?`]
 ];
@@ -34,7 +35,7 @@ const LEADING_RX = new RegExp(String.raw`^(\s*)${AMOUNT}`);
 const BARE_NUM_RX = new RegExp(String.raw`${AMOUNT}(?![\d/])`, 'g');
 
 const METRIC = new Set(['g', 'kg', 'ml', 'l']);
-const US = new Set(['oz', 'lb', 'cup', 'pint', 'quart', 'stick', 'floz']);
+const US = new Set(['oz', 'lb', 'cup', 'pint', 'quart', 'stick', 'floz', 'gill']);
 
 // grams per US cup for common ingredients (most specific first)
 const DENSITY = [
@@ -143,6 +144,7 @@ function convertOne(value, unit, system, context) {
       case 'kg': return gramsToUS(value * 1000, context);
       case 'ml': return mlToUS(value);
       case 'l': return mlToUS(value * 1000);
+      case 'gill': return mlToUS(value * 142);
     }
   } else {
     const dens = densityFor(context);
@@ -153,6 +155,7 @@ function convertOne(value, unit, system, context) {
       case 'floz': return mlToMetric(value * 29.57);
       case 'pint': return mlToMetric(value * 473);
       case 'quart': return mlToMetric(value * 946);
+      case 'gill': return mlToMetric(value * 142);
       case 'cup': return dens ? gramsToMetric(value * dens.d) : mlToMetric(value * 240);
     }
   }
@@ -178,7 +181,7 @@ function convertMatch(a, b, unitRaw, { system, scale, context }) {
   if (!unit) return null;
   const v1 = parseNum(a) * scale;
   const v2 = b ? parseNum(b) * scale : null;
-  const needs = system === 'us' ? METRIC.has(unit) : US.has(unit);
+  const needs = unit === 'gill' || (system === 'us' ? METRIC.has(unit) : US.has(unit));
   if (needs) {
     const c1 = convertOne(v1, unit, system, context);
     if (!c1) return null;

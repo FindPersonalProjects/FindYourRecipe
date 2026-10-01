@@ -1,6 +1,6 @@
 import { createStore } from './store.js';
 import { DAILY_LIMIT } from './config.js';
-import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, DIET_LABEL, allergenNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
+import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, LIFESTYLES, DIET_LABEL, allergenNames, lifestyleNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
 import { cultureFor } from './cultures.js';
 import { convertText, defaultSystem } from './units.js';
 
@@ -246,7 +246,7 @@ async function onAuthSubmit(e) {
       }
     } else if (authMode === 'reset') {
       await state.store.resetPassword(args.email);
-      toast('Reset link sent, check your email.');
+      toast('Reset link sent. Check your email.');
       openAuth('signin');
       return;
     } else if (authMode === 'signin-after') {
@@ -266,23 +266,31 @@ async function onAuthSubmit(e) {
 
 // ------------------------------------------------------------------ filters
 
-function buildFilters() {
-  const avoid = $('#avoidChips');
-  for (const [key, , label] of ALLERGENS) {
+// Multi-select chip group that stores an array of keys in state.filters[filterKey].
+function buildMultiChips(container, items, filterKey, className) {
+  for (const [key, label, title] of items) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'chip chip-avoid';
+    b.className = `chip ${className}`;
     b.dataset.value = key;
     b.textContent = label;
-    avoid.append(b);
+    if (title) b.title = title;
+    container.append(b);
   }
-  avoid.addEventListener('click', e => {
+  container.addEventListener('click', e => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
-    const set = new Set(state.filters.avoid || []);
+    const set = new Set(state.filters[filterKey] || []);
     set.has(chip.dataset.value) ? set.delete(chip.dataset.value) : set.add(chip.dataset.value);
-    setFilter('avoid', [...set]);
+    setFilter(filterKey, [...set]);
   });
+}
+
+function buildFilters() {
+  for (const fs of $$('.chips-avoid')) {
+    buildMultiChips(fs, ALLERGENS.filter(a => a[3] === fs.dataset.group).map(([key, , label]) => [key, label]), 'avoid', 'chip-avoid');
+  }
+  buildMultiChips($('#lifestyleChips'), LIFESTYLES.map(([key, , label, desc]) => [key, label, desc]), 'lifestyle', 'chip-life');
 
   for (const fs of $$('.chips[data-filter]')) {
     const key = fs.dataset.filter;
@@ -343,7 +351,9 @@ function syncFilterUI() {
     $$('.chip', fs).forEach(c => c.setAttribute('aria-pressed', String(c.dataset.value === state.filters[key])));
   }
   const avoid = new Set(state.filters.avoid || []);
-  $$('#avoidChips .chip').forEach(c => c.setAttribute('aria-pressed', String(avoid.has(c.dataset.value))));
+  $$('.chips-avoid .chip').forEach(c => c.setAttribute('aria-pressed', String(avoid.has(c.dataset.value))));
+  const life = new Set(state.filters.lifestyle || []);
+  $$('#lifestyleChips .chip').forEach(c => c.setAttribute('aria-pressed', String(life.has(c.dataset.value))));
   $('#f-region').value = state.filters.region;
 
   // cuisine list depends on region
@@ -382,7 +392,7 @@ function renderPotCount() {
   const n = all.length;
   const el = $('#potCount');
   if (state.mode === 'gamble') {
-    el.textContent = `${n.toLocaleString()} recipes simmering in the pot`;
+    el.textContent = `${n.toLocaleString()} recipe${n === 1 ? '' : 's'} simmering in the pot`;
   } else {
     el.textContent = n ? `${n.toLocaleString()} recipe${n === 1 ? '' : 's'} match your picky palate` : 'Nothing in the pot matches. Loosen a filter!';
   }
@@ -403,7 +413,7 @@ function renderSpoons() {
 function tickClock() {
   const el = $('#spoonsReset');
   if (!state.user) { el.textContent = 'Sign in to get 3 stirs a day'; return; }
-  if (state.usedToday === 0) { el.textContent = 'Fresh pot, all stirs ready'; return; }
+  if (state.usedToday === 0) { el.textContent = 'Fresh pot: all 3 stirs are ready'; return; }
   const now = new Date();
   const midnight = new Date(now); midnight.setHours(24, 0, 0, 0);
   const mins = Math.ceil((midnight - now) / 60000);
@@ -418,7 +428,7 @@ function updateStartButton() {
   const out = state.user && state.usedToday >= DAILY_LIMIT;
   btn.disabled = state.busy || !all.length || out;
   if (!state.user) hint.textContent = 'You will need to sign in first. It only takes a second.';
-  else if (out) hint.textContent = 'That is all 3 stirs for today. Go cook something! The pot refills at midnight.';
+  else if (out) hint.textContent = "That's all 3 stirs for today. Go cook something! The pot refills at midnight.";
   else hint.textContent = state.mode === 'picky' ? 'Filters on. The rating is still a secret.' : 'No peeking at the stars: you rate it first, then the truth comes out.';
 }
 
@@ -490,7 +500,7 @@ function backToKitchen() {
 async function startCooking() {
   if (state.busy) return;
   if (!state.user) { openAuth(state.store.mode === 'local' ? 'signin' : 'signup', 'Sign in to start stirring. You get 3 mystery recipes a day.'); return; }
-  if (state.usedToday >= DAILY_LIMIT) { toast('The pot is empty for today. Come back after midnight!'); return; }
+  if (state.usedToday >= DAILY_LIMIT) { toast("You've used all 3 stirs today. Come back after midnight!"); return; }
 
   const { fresh } = candidates();
   if (!fresh.length) { toast('No recipes match those filters.'); return; }
@@ -521,7 +531,7 @@ async function startCooking() {
     setBoiling(false);
     if (e.code === 'DAILY_LIMIT') {
       state.usedToday = DAILY_LIMIT;
-      toast('That is all 3 stirs for today. The pot refills at midnight.');
+      toast("That's all 3 stirs for today. The pot refills at midnight.");
     } else if (e.code === 'NOT_SIGNED_IN') {
       openAuth('signin');
     } else {
@@ -593,15 +603,21 @@ function recipeCardHTML(r, { fresh = false } = {}) {
   const culture = cultureFor(r);
   const source = safeUrl(r.source?.url);
   const img = safeUrl(r.image);
-  const place = [r.cuisine, r.country && r.country !== r.cuisine ? r.country : ''].filter(Boolean).join(' · ');
+  const place = r.cuisine || r.country;
   const tags = [
     place && `<li class="tag">🌍 ${esc(place)}</li>`,
     `<li class="tag">🍽 ${esc(COURSE_LABEL[r.course] || 'Dish')}</li>`,
     r.servings && `<li class="tag">👥 Serves ${esc(r.servings)}</li>`,
     `<li class="tag red">🔥 ${esc(DIFF_LABEL[r.difficulty] || r.difficulty)}</li>`,
-    DIET_LABEL[r.diet] && `<li class="tag green">🌱 ${DIET_LABEL[r.diet]}</li>`
+    DIET_LABEL[r.diet] && `<li class="tag green">🌱 ${DIET_LABEL[r.diet]}</li>`,
+    ...lifestyleNames(r.lifestyle || 0).map(l => `<li class="tag green">✓ ${esc(l)}</li>`)
   ].filter(Boolean).join('');
-  const contains = allergenNames(r.allergens || 0);
+  const contains = allergenNames(r.allergens || 0, 'allergy');
+  const alsoHas = allergenNames(r.allergens || 0, 'avoid');
+  const byline = /^[\w-]+(\.[\w-]+)+$/.test(r.author || '') ? 'from' : 'by';
+  const kicker = r.era === 'vintage' && r.vintage
+    ? `📜 A vintage recipe from ${esc(r.vintage.year)}`
+    : fresh ? 'Fresh out of the pot!' : 'From your cookbook';
 
   const via = r.via && r.via.name !== r.source?.name ? ` · via <a href="${esc(safeUrl(r.via.url))}" target="_blank" rel="noopener">${esc(r.via.name)}</a>` : '';
   const saved = state.saved.has(r.id);
@@ -615,9 +631,10 @@ function recipeCardHTML(r, { fresh = false } = {}) {
     <div class="card-hero ${img ? '' : 'no-image'}">
       ${img ? `<div class="card-image"><img src="${esc(img)}" alt="${esc(r.name)}" loading="lazy" onerror="this.parentElement.remove()"></div>` : ''}
       <div class="card-intro">
-        <p class="card-kicker">${fresh ? 'Fresh out of the pot!' : 'From your cookbook'}</p>
+        <p class="card-kicker">${kicker}</p>
         <h2 class="card-title">${esc(r.name)}</h2>
-        <p class="card-author">by <strong>${esc(r.author)}</strong>${source ? ` · <a href="${esc(source)}" target="_blank" rel="noopener">original recipe ↗</a>` : ''}${via}</p>
+        <p class="card-author">${byline} <strong>${esc(r.author)}</strong>${source ? ` · <a href="${esc(source)}" target="_blank" rel="noopener">original recipe ↗</a>` : ''}${via}</p>
+        ${r.era === 'vintage' ? `<p class="vintage-note">This recipe is written the way cooks wrote in ${esc(r.vintage?.year || 'the 1800s')}: expect old-fashioned measurements and very short instructions. Half the fun is figuring it out.</p>` : ''}
         <ul class="tags">${tags}</ul>
         ${timeHTML(r)}
         <div class="rating-slot"></div>
@@ -635,7 +652,7 @@ function recipeCardHTML(r, { fresh = false } = {}) {
         <div class="culture"><p>${esc(culture.text)}</p>${cultureSrc}</div>
       </section>
       <section class="card-section">
-        <h3>🧺 Ingredients <span class="muted" style="font-size:15px;font-family:var(--font-body)">(${r.ingredients.length}, tap to check off)</span></h3>
+        <h3>🧺 Ingredients <span class="muted" style="font-size:15px;font-family:var(--font-body)">(${r.ingredients.length} items, tap to check them off)</span></h3>
         <div class="ing-tools">
           <div class="seg" role="radiogroup" aria-label="Units">
             <button type="button" class="seg-btn" data-units="us" aria-checked="${state.units === 'us'}" role="radio">US (cups, oz, °F)</button>
@@ -647,7 +664,8 @@ function recipeCardHTML(r, { fresh = false } = {}) {
         </div>
         <p class="allergens ${contains.length ? '' : 'none'}">${contains.length
           ? `⚠️ <strong>Contains:</strong> ${contains.map(esc).join(', ')}`
-          : '✅ None of the common allergens were detected'} <span class="muted">(detected automatically, so double-check the list)</span></p>
+          : '✅ No common allergens detected'}${alsoHas.length ? ` · <strong>Also has:</strong> ${alsoHas.map(s => esc(s.toLowerCase())).join(', ')}` : ''}
+          <span class="muted">(detected automatically, so double-check the list)</span></p>
         <ul class="ingredients"></ul>
         <p class="muted scale-note" hidden style="font-size:14px">Amounts in the ingredient list are scaled. Amounts mentioned in the method are for the original batch.</p>
       </section>

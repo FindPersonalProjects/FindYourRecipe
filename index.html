@@ -77,7 +77,10 @@
             <fieldset class="chips" data-filter="hands"><legend>Hands-on time <span class="legend-note">(actual work in the kitchen)</span></legend></fieldset>
             <fieldset class="chips" data-filter="course"><legend>Meal</legend></fieldset>
             <fieldset class="chips" data-filter="diet"><legend>Diet</legend></fieldset>
-            <fieldset class="chips chips-avoid" id="avoidChips"><legend>Allergies &amp; things to avoid <span class="legend-note">(pick any)</span></legend></fieldset>
+            <fieldset class="chips chips-multi" id="lifestyleChips"><legend>Must also be <span class="legend-note">(pick any; based on ingredients, not certified)</span></legend></fieldset>
+            <fieldset class="chips chips-avoid" id="allergyChips" data-group="allergy"><legend>Allergies <span class="legend-note">(pick any)</span></legend></fieldset>
+            <fieldset class="chips chips-avoid" id="avoidChips" data-group="avoid"><legend>Other things to avoid</legend></fieldset>
+            <fieldset class="chips" data-filter="era"><legend>Recipe age</legend></fieldset>
             <fieldset class="chips" data-filter="difficulty"><legend>Difficulty</legend></fieldset>
             <fieldset class="chips" data-filter="protein"><legend>Main ingredient</legend></fieldset>
           </div>
@@ -195,8 +198,12 @@
 
   <footer class="site-footer">
     <div class="gingham" aria-hidden="true"></div>
-    <p>Recipes come from <a href="https://www.themealdb.com" target="_blank" rel="noopener">TheMealDB</a> and the
-      <a href="https://en.wikibooks.org/wiki/Cookbook" target="_blank" rel="noopener">Wikibooks Cookbook</a> (CC BY-SA), with cultural notes from
+    <p>Recipes come from <a href="https://www.themealdb.com" target="_blank" rel="noopener">TheMealDB</a>, the
+      <a href="https://en.wikibooks.org/wiki/Cookbook" target="_blank" rel="noopener">Wikibooks Cookbook</a> (CC BY-SA),
+      <a href="https://based.cooking" target="_blank" rel="noopener">based.cooking</a> and
+      <a href="https://publicdomainrecipes.com" target="_blank" rel="noopener">Public Domain Recipes</a> (public domain),
+      the <a href="https://github.com/hadley/recipes" target="_blank" rel="noopener">Wickham family recipes</a> (CC BY 4.0), and vintage cookbooks on
+      <a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> (public domain). Cultural notes come from
       <a href="https://www.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (CC BY-SA).
       Every recipe links back to its original source, so you can rate it there too.</p>
   </footer>

@@ -175,6 +175,12 @@ main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 24px 16
 .legend-note { font-weight: 600; opacity: .8; }
 .chip-avoid[aria-pressed="true"] { background: var(--tomato); border-color: var(--tomato); color: #fff; }
 .chip-avoid[aria-pressed="true"]::before { content: "🚫 "; }
+.chip-life[aria-pressed="true"] { background: var(--basil); border-color: var(--basil); color: #fff; }
+.chip-life[aria-pressed="true"]::before { content: "✓ "; }
+.vintage-note {
+  font-size: 14px; margin: -6px 0 14px; padding: 8px 12px; border-radius: 10px;
+  background: #F3E7CF; border-left: 4px solid #B08A4E; color: var(--cocoa);
+}
 
 .pot-count { margin: 18px 0 8px; font-family: var(--font-hand); font-size: 24px; color: var(--basil); min-height: 1.5em; }
 

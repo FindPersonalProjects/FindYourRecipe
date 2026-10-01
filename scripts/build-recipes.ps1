@@ -1,4 +1,4 @@
-<#
+﻿<#
   FindYourRecipe recipe harvester.
 
   Pulls recipes from open sources, normalizes them, and writes:
@@ -6,20 +6,26 @@
     data/r/<id>.json     - one full recipe per file
 
   Sources (all free to reuse, with attribution):
-    - TheMealDB API        https://www.themealdb.com/api.php
-    - Wikibooks Cookbook   https://en.wikibooks.org/wiki/Cookbook  (CC BY-SA)
-    - Wikipedia summaries  for the cultural-significance blurbs     (CC BY-SA)
+    - TheMealDB API          https://www.themealdb.com/api.php
+    - Wikibooks Cookbook     https://en.wikibooks.org/wiki/Cookbook         (CC BY-SA)
+    - based.cooking          https://github.com/LukeSmithxyz/based.cooking    (public domain)
+    - Public Domain Recipes  https://github.com/ronaldl29/public-domain-recipes (public domain)
+    - Wickham family recipes https://github.com/hadley/recipes                (CC BY 4.0, family recipes only)
+    - Project Gutenberg      Boston Cooking-School Cook Book (1896), Mrs Beeton (1861) (public domain)
+    - Wikipedia summaries    for the cultural-significance blurbs           (CC BY-SA)
 
-  Sites whose terms forbid scraping (Allrecipes, Yelp, ...) are deliberately not crawled.
+  Sites whose terms forbid scraping (Allrecipes, Yelp, Fandom, ...) are deliberately not crawled.
   Star ratings are NOT harvested: the hidden rating comes from FindYourRecipe cooks.
 
   Usage (from the repo root):
     powershell -ExecutionPolicy Bypass -File scripts\build-recipes.ps1
-    powershell -ExecutionPolicy Bypass -File scripts\build-recipes.ps1 -WikibooksMax 300 -SkipWikipedia
+    powershell -ExecutionPolicy Bypass -File scripts\build-recipes.ps1 -SkipGutenberg -SkipWikipedia
 #>
 param(
-  [int]$WikibooksMax = 700,
+  [int]$WikibooksMax = 5000,
   [switch]$SkipWikibooks,
+  [switch]$SkipMarkdown,
+  [switch]$SkipGutenberg,
   [switch]$SkipWikipedia
 )
 
@@ -35,17 +41,23 @@ $Utf8    = New-Object System.Text.UTF8Encoding($false)
 
 # ---------------------------------------------------------------- http helpers
 
+# One shared HttpClient: much faster than Invoke-WebRequest in Windows PowerShell.
+Add-Type -AssemblyName System.Net.Http
+$Http = New-Object System.Net.Http.HttpClient
+$Http.Timeout = [TimeSpan]::FromSeconds(40)
+$Http.DefaultRequestHeaders.UserAgent.ParseAdd($UA)
+
 function Get-Text([string]$Url) {
   for ($i = 0; $i -lt 3; $i++) {
     try {
-      $r = Invoke-WebRequest -UseBasicParsing -UserAgent $UA -Uri $Url -TimeoutSec 40
-      return [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray())
-    } catch {
-      $code = $null
-      if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-      if ($code -eq 404) { return $null }
-      Start-Sleep -Seconds (2 * ($i + 1))
-    }
+      $resp = $Http.GetAsync($Url).GetAwaiter().GetResult()
+      if ([int]$resp.StatusCode -eq 404) { return $null }
+      if ($resp.IsSuccessStatusCode) {
+        return [Text.Encoding]::UTF8.GetString($resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())
+      }
+      if ([int]$resp.StatusCode -eq 429) { Start-Sleep -Seconds (5 * ($i + 1)); continue }
+    } catch { }
+    Start-Sleep -Seconds (2 * ($i + 1))
   }
   Write-Warning "Giving up on $Url"
   return $null
@@ -179,6 +191,30 @@ $Allergens = [ordered]@{
       'vermouth','calvados','grand marnier','cointreau','triple sec','shaoxing','madeira','cider','schnapps','grappa','ouzo',
       'raki','baileys','kahlua','limoncello','cachaça','cachaca','pisco','soju','absinthe','bitters')
     except = @('wine vinegar','rice vinegar','cider vinegar','sherry vinegar','malt vinegar','rice wine vinegar','ginger ale','ginger beer','root beer','non-alcoholic','alcohol-free','apple cider vinegar') }
+  mustard = @{ bit = 2048; words = @('mustard','dijon'); except = @('mustard greens') }
+  celery = @{ bit = 4096; words = @('celery','celeriac','celery salt','celery seed'); except = @() }
+  sulfites = @{ bit = 8192; words = @('wine','dried apricot','dried fruit','sultana','raisin','prune','vinegar','molasses','sauerkraut',
+      'pickle','pickled','maraschino','grape juice','lemon juice concentrate','sherry','port','vermouth','champagne','prosecco','cider')
+    except = @() }
+  nightshade = @{ bit = 16384; words = @('tomato','tomatoes','potato','potatoes','pepper','peppers','capsicum','chilli','chili','chile',
+      'paprika','cayenne','aubergine','eggplant','jalapeño','jalapeno','pimento','pimiento','tomatillo','goji','harissa','sriracha',
+      'tabasco','hot sauce','salsa','ketchup','passata','chipotle','scotch bonnet','habanero','gochujang','berbere','chilli flakes')
+    except = @('sweet potato','sweet potatoes','black pepper','white pepper','peppercorn','ground pepper','pepper to taste',
+      'salt and pepper','salt & pepper','szechuan pepper','sichuan pepper','pink peppercorn') }
+  mushroom = @{ bit = 32768; words = @('mushroom','porcini','shiitake','chanterelle','morel','truffle','enoki','oyster mushroom','portobello','cep','girolle','champignon')
+    except = @('chocolate truffle') }
+  coconut = @{ bit = 65536; words = @('coconut','copra'); except = @() }
+  corn = @{ bit = 131072; words = @('corn','cornmeal','cornflour','corn flour','cornstarch','polenta','maize','masa','grits','hominy','popcorn','tortilla chip','sweetcorn','corn syrup')
+    except = @('peppercorn','corned beef','acorn','corn salad','flour tortilla') }
+  allium = @{ bit = 262144; words = @('onion','garlic','shallot','leek','chive','scallion','spring onion','green onion','asafoetida','asafetida')
+    except = @() }
+  spicy = @{ bit = 524288; words = @('chilli','chili','chile','cayenne','jalapeño','jalapeno','habanero','scotch bonnet','chipotle',
+      'sriracha','tabasco','hot sauce','harissa','gochujang','sambal','chilli flakes','red pepper flakes','pepper flakes','bird''s eye',
+      'piri piri','peri peri','berbere','wasabi','horseradish','curry paste','vindaloo','ghost pepper','serrano')
+    except = @('sweet chilli sauce','sweet chili sauce','mild chilli','chili powder (mild)') }
+  redmeat = @{ bit = 1048576; words = @('beef','pork','lamb','mutton','goat','veal','venison','steak','mince','brisket','oxtail','bacon','ham',
+      'sausage','chorizo','salami','pepperoni','prosciutto','pancetta','rabbit','bison','liver','kidney','oxtail','corned beef','boerewors','merguez')
+    except = @('chicken sausage','turkey sausage','vegetarian sausage','vegan sausage','turkey bacon','beef tomato','mincemeat') }
 }
 
 function Get-AllergenMask([string[]]$items) {
@@ -188,6 +224,53 @@ function Get-AllergenMask([string[]]$items) {
     $t = Remove-Phrases $base $a.except
     if (Test-Words $t $a.words) { $mask = $mask -bor $a.bit }
   }
+  return $mask
+}
+
+# Lifestyle diets, written as bit flags (index field "y"). Bit order must match js/data.js LIFESTYLES.
+# These are ingredient-based approximations ("-friendly"), not certifications.
+$HighCarbWords = @('flour','bread','breadcrumb','pasta','spaghetti','noodle','macaroni','rice','potato','potatoes','sugar','honey',
+  'syrup','molasses','treacle','oat','oats','oatmeal','corn','cornmeal','polenta','couscous','quinoa','bulgur','barley','tortilla',
+  'pita','pitta','naan','cracker','biscuit','cake','pastry','cassava','yam','plantain','banana','semolina','millet','sorghum',
+  'teff','fufu','gnocchi','dumpling','bun','roll','bagel','croissant','cereal','granola','jam','marmalade','condensed','dates',
+  'raisin','sultana','chocolate chip','cornflakes','tapioca','arrowroot','lasagne','lasagna','ramen','udon','vermicelli','orzo',
+  'risotto','arborio','basmati','sago','custard powder','ketchup','juice')
+$HighCarbExcept = @('almond flour','coconut flour','cauliflower rice','courgetti','zucchini noodle','shirataki','sugar-free','sugar free',
+  'rice vinegar','rice wine vinegar','spring roll wrapper','lime juice','lemon juice','juice of')
+$LegumeWords = @('bean','beans','lentil','lentils','chickpea','chickpeas','pea','peas','peanut','soy','soya','tofu','tempeh','edamame',
+  'hummus','dal','dhal','gram','miso','black-eyed')
+$LegumeExcept = @('green beans','green bean','runner beans','french beans','string beans','snow peas','sugar snap','vanilla bean',
+  'coffee bean','cocoa bean','jelly bean','sweet pea','chickpea flour')
+$SweetFruitWords = @('apple','banana','mango','pineapple','orange','grape','raisin','date','fig','pear','peach','cherry','cherries',
+  'apricot','plum','melon','watermelon','papaya','kiwi','prune','sultana','currant','cranberries','dried fruit')
+$AddedSugarWords = @('sugar','honey','syrup','molasses','treacle','condensed milk','jam','marmalade','jaggery','agave','caramel',
+  'dulce de leche','icing','frosting','chocolate','candied','glacé','glace','sweetened','marshmallow','nutella','ketchup','sprinkles')
+$AddedSugarExcept = @('sugar-free','sugar free','unsweetened','no sugar','dark chocolate 85','sugar snap')
+
+function Get-LifestyleMask([string[]]$items, [int]$allergens, [int]$diet) {
+  $base = Normalize-Ingredients $items
+  $has = { param($bit) ($allergens -band $bit) -ne 0 }
+  $blood = $base -match '\bblood\b|black pudding|blood sausage|dinuguan'
+  $nonKosherFish = Test-Words $base @('eel','catfish','monkfish','swordfish','shark','sturgeon','caviar','rabbit','frog','snail','escargot')
+  $landMeat = $diet -eq 0
+  $dairy = & $has 2
+  $highCarb = Test-Words (Remove-Phrases $base $HighCarbExcept) $HighCarbWords
+  $legume = Test-Words (Remove-Phrases $base $LegumeExcept) $LegumeWords
+  $sweetFruit = Test-Words $base $SweetFruitWords
+  $milk = Test-Words (Remove-Phrases $base @('coconut milk','almond milk','oat milk','soy milk','buttermilk')) @('milk','condensed milk','evaporated milk')
+  $sugar = Test-Words (Remove-Phrases $base $AddedSugarExcept) $AddedSugarWords
+  $grains = (& $has 1) -or (Test-Words (Remove-Phrases $base @('cauliflower rice','rice vinegar','rice wine vinegar')) @('rice','corn','cornmeal','polenta','oat','oats','quinoa','millet','sorghum','teff','buckwheat','couscous','tortilla','maize'))
+  $processed = Test-Words $base @('margarine','vegetable oil','canola','soybean oil','sunflower oil','stock cube','bouillon cube','maggi','msg','processed cheese','spam','hot dog')
+
+  $mask = 0
+  if (-not (& $has 512) -and -not (& $has 1024) -and -not $blood) { $mask = $mask -bor 1 }                        # halal-friendly
+  if (-not (& $has 512) -and -not (& $has 64) -and -not $blood -and -not $nonKosherFish -and -not ($landMeat -and $dairy)) { $mask = $mask -bor 2 }  # kosher-style
+  if (-not $highCarb) { $mask = $mask -bor 4 }                                                                       # low-carb
+  if (-not $highCarb -and -not $legume -and -not $sweetFruit -and -not $milk -and -not $sugar) { $mask = $mask -bor 8 } # keto-friendly
+  $paleo = -not $grains -and -not $legume -and -not $dairy -and -not $sugar -and -not $processed -and -not (& $has 128)
+  if ($paleo) { $mask = $mask -bor 16 }                                                                              # paleo-friendly
+  if ($paleo -and -not (& $has 1024)) { $mask = $mask -bor 32 }                                                      # whole30-friendly
+  if (-not $sugar) { $mask = $mask -bor 64 }                                                                         # no added sugar
   return $mask
 }
 
@@ -204,11 +287,28 @@ $PassiveNames = [ordered]@{ 'marinat' = 'marinating'; 'proof|prove|rise|risen' =
   'freez' = 'freezing'; 'chill|fridge|refrigerat|until set' = 'chilling'; 'ferment' = 'fermenting'; 'rest|stand|sit' = 'resting';
   'cool' = 'cooling'; 'steep|infuse' = 'steeping'; 'cure' = 'curing' }
 
+$NumberWords = [ordered]@{
+  'twenty-five' = 25; 'forty-five' = 45; 'thirty-five' = 35; 'fifteen' = 15; 'twenty' = 20; 'thirty' = 30; 'forty' = 40;
+  'fifty' = 50; 'sixty' = 60; 'ninety' = 90; 'eleven' = 11; 'twelve' = 12; 'eighteen' = 18; 'ten' = 10; 'one' = 1; 'two' = 2;
+  'three' = 3; 'four' = 4; 'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8; 'nine' = 9
+}
+# Older recipes write times in words: "cook fifteen minutes", "half an hour".
+function Convert-NumberWords([string]$s) {
+  $s = $s -replace '\b(half an|a half) hour', '30 minutes' -replace '\bquarter of an hour', '15 minutes' -replace '\ban hour\b', '1 hour' -replace '\ba few minutes', '3 minutes'
+  $s = [regex]::Replace($s, '\b(one|two|three|four|five|six) and (one-)?half (hours?|minutes?)', {
+    param($m) "$($NumberWords[$m.Groups[1].Value] + 0.5) $($m.Groups[3].Value)" })
+  foreach ($w in $NumberWords.Keys) {
+    $s = [regex]::Replace($s, "\b$w\b(?=\s+((to|or)\s+\w+\s+)?(days?|hours?|minutes?|mins?|seconds?)\b)", [string]$NumberWords[$w])
+    $s = [regex]::Replace($s, "\b$w\b(?=\s+(to|or)\s+\d)", [string]$NumberWords[$w])
+  }
+  return $s
+}
+
 function Get-Timing([string[]]$steps, $ingredients) {
   $active = 0.0; $passive = 0.0; $why = New-Object System.Collections.ArrayList
   $rx = '(\d+(?:\.\d+)?)\s*(?:(?:-|–|to|or)\s*(\d+(?:\.\d+)?))?\s*(days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)\b'
   foreach ($step in $steps) {
-    $s0 = ($step.ToLower() -replace '½', '.5' -replace '¼', '.25' -replace '¾', '.75' -replace '(\d)\s+\.(\d)', '$1.$2')
+    $s0 = Convert-NumberWords ($step.ToLower() -replace '½', '.5' -replace '¼', '.25' -replace '¾', '.75' -replace '(\d)\s+\.(\d)', '$1.$2')
     foreach ($s in [regex]::Split($s0, '(?<=[.!?;])\s+')) {
       if ($s -match $StorageRx -or $s -match $OptionalRx) { continue }
       $parallel = $s -match $ParallelRx
@@ -256,6 +356,147 @@ function Normalize-Qty([string]$q) {
   $q = $q -replace '(?i)\b(litres?|liters?)\b', 'L' -replace '(?i)\bkilos?\b|\bkilograms?\b', 'kg'
   $q = $q -replace '(?i)\b(\d+(?:\.\d+)?)\s*(?=(g|kg|ml|L|oz|lb)\b)', '$1 '
   return $q.Trim()
+}
+
+# ---------------------------------------------------------------- text clean-up
+
+# Misspellings found in the source recipes (whole words, any case).
+$Typos = @{
+  'tomatos' = 'tomatoes'; 'tomaotes' = 'tomatoes'; 'ptoatoes' = 'potatoes'; 'potatos' = 'potatoes'; 'spinkling' = 'sprinkling';
+  'handfull' = 'handful'; 'handfulls' = 'handfuls'; 'skinnless' = 'skinless'; 'seperated' = 'separated'; 'seperate' = 'separate';
+  'seperately' = 'separately'; 'yolkes' = 'yolks'; 'hazlenuts' = 'hazelnuts'; 'hazlenut' = 'hazelnut'; 'dessicated' = 'desiccated';
+  'cardamon' = 'cardamom'; 'cardemom' = 'cardamom'; 'cheescake' = 'cheesecake'; 'emove' = 'remove'; 'fetta' = 'feta';
+  'fryrer' = 'fryer'; 'gilden' = 'golden'; 'grounf' = 'ground'; 'incorperate' = 'incorporate'; 'insterted' = 'inserted';
+  'millk' = 'milk'; 'miutes' = 'minutes'; 'mozarella' = 'mozzarella'; 'mozzerella' = 'mozzarella'; 'occassionally' = 'occasionally';
+  'ovenight' = 'overnight'; 'pistachos' = 'pistachios'; 'plaintains' = 'plantains'; 'preaheated' = 'preheated';
+  'prheated' = 'preheated'; 'ricotto' = 'ricotta'; 'salth' = 'salt'; 'sheeet' = 'sheet'; 'startch' = 'starch'; 'strarts' = 'starts';
+  'temperture' = 'temperature'; 'tendir' = 'tender'; 'thickenes' = 'thickens'; 'thinnly' = 'thinly'; 'throughly' = 'thoroughly';
+  'untill' = 'until'; 'berberei' = 'berbere'; 'bratwurstf' = 'bratwurst'; 'kneed' = 'knead'; 'kneeding' = 'kneading';
+  'abour' = 'about'; 'tblsp' = 'tbsp'; 'cassaba' = 'cassava'; 'brocolli' = 'broccoli'; 'brocoli' = 'broccoli';
+  'parmesean' = 'parmesan'; 'parmasan' = 'parmesan'; 'worchestershire' = 'Worcestershire'; 'worcester' = 'Worcestershire';
+  'tumeric' = 'turmeric'; 'cinammon' = 'cinnamon'; 'cinamon' = 'cinnamon'; 'vanila' = 'vanilla'; 'zuchini' = 'zucchini';
+  'zucchinni' = 'zucchini'; 'cilantro' = 'cilantro'; 'corriander' = 'coriander'; 'chillis' = 'chillies'; 'tablesppon' = 'tablespoon';
+  'teaspon' = 'teaspoon'; 'recieve' = 'receive'; 'seasonning' = 'seasoning'; 'definately' = 'definitely'; 'carmelize' = 'caramelize';
+  'carmelized' = 'caramelized'; 'saute' = 'sauté'; 'sauteed' = 'sautéed'; 'sauteing' = 'sautéing'; 'yoghourt' = 'yoghurt';
+  'aubergines' = 'aubergines'; 'cumberland' = 'Cumberland'; 'gruyere' = 'Gruyère'; 'jalepeno' = 'jalapeño'; 'jalepenos' = 'jalapeños';
+  'mayonaise' = 'mayonnaise'; 'pinapple' = 'pineapple'; 'raspberrys' = 'raspberries'; 'strawberrys' = 'strawberries';
+  'ea' = 'each'; 'tbls' = 'tbsp'
+}
+$TyposRx = '\b(' + (($Typos.Keys | Sort-Object Length -Descending | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\b'
+
+function Fix-Typos([string]$s) {
+  if (-not $s) { return $s }
+  return [regex]::Replace($s, $TyposRx, {
+    param($m)
+    $fix = $Typos[$m.Value.ToLower()]
+    if ($m.Value -cmatch '^[A-Z]' -and $fix -cmatch '^[a-z]') { $fix = $fix.Substring(0, 1).ToUpper() + $fix.Substring(1) }
+    $fix
+  }, 'IgnoreCase')
+}
+
+function Fix-Sentence([string]$s) {
+  if (-not $s) { return $s }
+  $s = Fix-Typos $s
+  $s = $s -replace '([a-z\)%])([.!?])([A-Z][a-z])', '$1$2 $3'      # "beef.Slow" -> "beef. Slow"
+  $s = $s -replace '\s+([,.;:!?])(?=\s|$)', '$1'                    # "salt , pepper" -> "salt, pepper"
+  $s = $s -replace ',(?=[A-Za-z])', ', '                            # "salt,pepper" -> "salt, pepper"
+  $s = $s -replace '(\d)\s*[º°]\s*([CF])\b', '$1°$2' -replace '\.{2,}(?!\.)', '.' -replace '\s{2,}', ' '
+  $s = $s.Trim()
+  if ($s -cmatch '^[a-z]') { $s = $s.Substring(0, 1).ToUpper() + $s.Substring(1) }
+  return $s
+}
+
+# Words that stay capitalized in ingredient names.
+$ProperWords = @('Parmesan','Parmigiano','Reggiano','Worcestershire','Dijon','Greek','Italian','French','Mexican','Thai','Chinese',
+  'Japanese','Spanish','English','Scotch','Tabasco','Sriracha','Cajun','Bramley','Maldon','Gruyère','Cheddar',
+  'Emmental','Roquefort','Stilton','Camembert','Brie','Kalamata','Medjool','Arborio','Basmati','Szechuan','Sichuan','Kashmiri',
+  'Madras','Jamaican','Caribbean','Marmite','Nutella','Maggi','Knorr','Angostura','Cointreau','Marnier','Kahlua',
+  'Baileys','Marsala','Madeira','Yorkshire','Cornish','Serrano','Iberico','Parma','Cumberland','Toulouse',
+  'Romano','Pecorino','Manchego','Gouda','Edam','Comté','Monterey','Colby','Dutch','Swiss','Turkish','Indian','Asian',
+  'Mediterranean','Provence','Philadelphia','Guinness','Thai','Bombay','Persian','Moroccan','Lebanese','Korean','Vietnamese',
+  'Puy','Valencia','Seville','Darjeeling','Assam','Oreo','Oreos',
+  'Herbes','Mexico','Kenyan','Nigerian','Ghanaian','Ethiopian','Brazilian','Peruvian','Polish','Hungarian','Russian',
+  'Ukrainian','German','Danish','Norwegian','Irish','Scottish','Welsh','American','Canadian','Australian','Filipino','Malaysian')
+$ProperSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($w in $ProperWords) { [void]$ProperSet.Add($w) }
+$ProperMap = @{}; foreach ($w in $ProperWords) { $ProperMap[$w.ToLower()] = $w }
+
+# TheMealDB writes ingredients in Title Case ("Double Cream"); use normal casing ("double cream").
+function Fix-ItemCase([string]$item) {
+  if (-not $item) { return $item }
+  $words = $item -split ' '
+  $out = foreach ($w in $words) {
+    $core = $w -replace '[^\p{L}]', ''
+    if ($core -and $ProperMap.ContainsKey($core.ToLower())) { $w -replace [regex]::Escape($core), $ProperMap[$core.ToLower()] }
+    elseif ($w -cmatch '^[A-Z]{2,}$') { $w }                       # acronyms like "BBQ"
+    else { $w.ToLower() }
+  }
+  return ($out -join ' ')
+}
+
+# "1 chopped" + "Garlic Clove" -> qty "1", item "garlic clove, chopped"
+$PrepWords = 'finely chopped|roughly chopped|coarsely chopped|chopped|thinly sliced|sliced|diced|minced|finely grated|grated|' +
+  'crushed|lightly beaten|beaten|melted|softened|peeled|halved|quartered|shredded|cubed|deseeded|seeded|sifted|toasted|juiced|' +
+  'zested|drained|rinsed|cooked|boiled|mashed|separated|at room temperature|to taste|to serve|for garnish|to garnish|garnish|' +
+  'for frying|for greasing|for dusting|for brushing|optional|torn|trimmed|pitted|crumbled|cut into [^,]+|cut in [^,]+|' +
+  'chopped finely|sliced thinly|bashed|bruised|squeezed|ground|freshly ground|warm|cold|room temperature|whisked|dissolved'
+$PrepRx = "^(?<amt>.*?)\s*\b(?<prep>(?:$PrepWords)(?:\s*(?:,|and|&)\s*(?:$PrepWords))*)\s*$"
+
+function Split-Qty([string]$qty, [string]$item) {
+  if (-not $qty) { return @($qty, $item) }
+  $m = [regex]::Match($qty, $PrepRx, 'IgnoreCase')
+  if (-not $m.Success) { return @($qty, $item) }
+  $amt = $m.Groups['amt'].Value.Trim(' ', ',')
+  $prep = $m.Groups['prep'].Value.ToLower()
+  return @($amt, "$item, $prep")
+}
+
+function Fix-Name([string]$name) {
+  $name = Fix-Typos (Clean-Text $name)
+  if ($name -cmatch '^[a-z]') {
+    $name = ($name -split ' ' | ForEach-Object { if ($_ -cmatch '^[a-z]' -and $_ -notmatch '^(and|or|with|in|of|a|the|de|la|al|e)$') { $_.Substring(0, 1).ToUpper() + $_.Substring(1) } else { $_ } }) -join ' '
+  }
+  return $name
+}
+
+# Steps that are only headings ("Make the sauce:") are merged into the step that follows.
+function Fix-Steps([string[]]$steps) {
+  $out = New-Object System.Collections.ArrayList
+  $pending = ''
+  foreach ($s in $steps) {
+    $s = Fix-Sentence $s
+    if (-not $s) { continue }
+    if ($s -match '^[^.!?]{2,60}:$' -or $s -match '^(for the|to make the|make the)\b[^.!?]{0,50}$') {
+      $pending = ($s.TrimEnd(':')) + ': '
+      continue
+    }
+    [void]$out.Add($pending + $s)
+    $pending = ''
+  }
+  return @($out)
+}
+
+function Fix-Ingredients($ingredients, [bool]$titleCase) {
+  $out = foreach ($i in $ingredients) {
+    $item = (Fix-Typos (Clean-Text $i.item)) -replace '(?<!\b(oz|lb|lbs|tsp|tbsp|pt|qt|no|approx|etc))\.$', ''
+    $qty = Fix-Typos (Clean-Text $i.qty)
+    if ($titleCase) { $item = Fix-ItemCase $item }
+    $pair = Split-Qty $qty $item
+    $q = Normalize-Qty $pair[0]
+    if ($q -cmatch '^[A-Z][a-z]+\b' -and $q -notmatch '^(Juice|Zest)\b') { $q = $q.Substring(0, 1).ToLower() + $q.Substring(1) }
+    $it = $pair[1]
+    # "1" + "red onions" -> "1 red onion"
+    if ($q -match '^(1|one)( (large|medium|small|whole|big))?$') {
+      $parts = $it -split ',', 2
+      $noun = $parts[0]
+      if ($noun -notmatch '(?i)(ss|us|is|molasses|greens|oats|lentils|peas|beans|noodles|sprouts|chives|herbs|leaves)$') {
+        $noun = $noun -replace '(?i)(tomat|potat|mang)oes$', '$1o' -replace '(?i)([^aeiou])ies$', '$1y' -replace '(?i)([a-z]{3})s$', '$1'
+      }
+      $it = if ($parts.Count -gt 1) { "$noun,$($parts[1])" } else { $noun }
+    }
+    [ordered]@{ item = $it; qty = $q }
+  }
+  return @($out)
 }
 
 function Get-Protein([string]$category, [string[]]$items, [int]$diet, [string]$name) {
@@ -360,6 +601,35 @@ function Get-Cuisine([string]$area, [string]$country) {
   return ''
 }
 
+# "Thai Green Curry" -> Thai, "Polish Pierogi" -> Polish; '' when the name has no clue.
+$CuisineAliases = @{
+  'Bavarian' = 'German'; 'Swabian' = 'German'; 'Berliner' = 'German'; 'Tuscan' = 'Italian'; 'Sicilian' = 'Italian';
+  'Neapolitan' = 'Italian'; 'Roman' = 'Italian'; 'Venetian' = 'Italian'; 'Milanese' = 'Italian'; 'Genovese' = 'Italian';
+  'Provençal' = 'French'; 'Provencal' = 'French'; 'Breton' = 'French'; 'Alsatian' = 'French'; 'Parisian' = 'French';
+  'Andalusian' = 'Spanish'; 'Catalan' = 'Spanish'; 'Basque' = 'Spanish'; 'Galician' = 'Spanish'; 'Hunan' = 'Chinese';
+  'Szechuan' = 'Chinese'; 'Shanghai' = 'Chinese'; 'Peking' = 'Chinese'; 'Keralan' = 'Indian'; 'Kerala' = 'Indian';
+  'Goan' = 'Indian'; 'Mughlai' = 'Indian'; 'Hyderabadi' = 'Indian'; 'Yorkshire' = 'British'; 'Cornish' = 'British';
+  'Lancashire' = 'British'; 'Devon' = 'British'; 'Texan' = 'American'; 'New England' = 'American'; 'Boston' = 'American';
+  'Philly' = 'American'; 'Southern' = 'American'; 'Viennese' = 'Austrian'; 'Tyrolean' = 'Austrian'; 'Bengal' = 'Bengali';
+  'Okinawan' = 'Japanese'; 'Balinese' = 'Indonesian'; 'Javanese' = 'Indonesian'; 'Quebec' = 'Canadian'; 'Québécois' = 'Canadian'
+}
+
+function Get-CuisineFromName([string]$name) {
+  foreach ($k in ($CuisineAliases.Keys | Sort-Object Length -Descending)) {
+    if ($name -match ('\b' + [regex]::Escape($k) + '\b')) { return $CuisineAliases[$k] }
+  }
+  foreach ($k in ($Regions.Keys | Sort-Object Length -Descending)) {
+    if ($name -match ('\b' + [regex]::Escape($k) + '\b')) { return $k }
+  }
+  foreach ($k in $Demonyms.Keys) { if ($name -match ('\b' + [regex]::Escape($k) + '\b')) { return $Demonyms[$k] } }
+  return ''
+}
+
+# Intros only count as cultural background when they talk about history or tradition.
+$CultureRx = '(?i)\b(tradition|traditional|traditionally|history|historic|originat|national dish|festival|celebrat|holiday|' +
+  'culture|cultural|heritage|centur|ancient|staple|ritual|ceremon|wedding|christmas|easter|ramadan|eid|diwali|passover|' +
+  'hanukkah|new year|lunar|thanksgiving|street food|named after|introduced|immigrant|colonial|peasant|grandmother|generations)'
+
 function Get-Region([string]$cuisine) {
   if ($cuisine -and $Regions.ContainsKey($cuisine)) { return $Regions[$cuisine] }
   return 'Global'
@@ -378,12 +648,18 @@ if (Test-Path $CacheFile) {
   Write-Host "Loaded $($WikiCache.Count) cached Wikipedia lookups"
 }
 
-function Get-WikiCulture([string]$name) {
-  if ($SkipWikipedia -or -not $name) { return $null }
-  $key = $name.ToLower()
+$script:wikiNew = 0
+function Save-WikiCache {
+  if ($SkipWikipedia) { return }
+  New-Item -ItemType Directory -Force (Split-Path $CacheFile) | Out-Null
+  [IO.File]::WriteAllText($CacheFile, ($WikiCache | ConvertTo-Json -Depth 5 -Compress), $Utf8)
+}
+
+# Looks up one Wikipedia title. Cached results keep the short description so stricter checks can reuse them.
+function Get-WikiSummary([string]$title) {
+  $key = $title.ToLower()
   if ($WikiCache.ContainsKey($key)) { return $WikiCache[$key] }
-  $title = [Uri]::EscapeDataString(($name -replace ' ', '_'))
-  $j = Get-Json "https://en.wikipedia.org/api/rest_v1/page/summary/$title"
+  $j = Get-Json ("https://en.wikipedia.org/api/rest_v1/page/summary/" + [Uri]::EscapeDataString(($title -replace ' ', '_')))
   $result = $null
   if ($j -and $j.type -eq 'standard' -and $j.extract) {
     $desc = ('' + $j.description + ' ' + $j.extract).ToLower()
@@ -391,18 +667,97 @@ function Get-WikiCulture([string]$name) {
       $result = [ordered]@{
         text   = Clean-Text $j.extract
         source = [ordered]@{ name = 'Wikipedia'; url = $j.content_urls.desktop.page }
+        desc   = ('' + $j.description)
       }
     }
   }
   $WikiCache[$key] = $result
+  $script:wikiNew++
+  if ($script:wikiNew % 50 -eq 0) { Save-WikiCache }
   return $result
+}
+
+# Tries the dish name, then simpler forms of it: "Ginger Snaps" -> "Gingersnap", "Tomato Pizza" -> "Pizza",
+# "Semmelknoedel (Bavarian Bread Dumplings)" -> "Bread dumplings". Broad fallbacks must be described as food.
+function Get-WikiCulture([string]$name) {
+  if ($SkipWikipedia -or -not $name) { return $null }
+  $base = ($name -replace '\s*\(.*?\)\s*', ' ' -replace '\s+', ' ').Trim()
+  $exact = New-Object System.Collections.Generic.List[string]
+  $broad = New-Object System.Collections.Generic.List[string]
+  $exact.Add($name); $exact.Add($base)
+  if ($name -match '\(([^)]+)\)' -and $Matches[1] -match '\s' -and $Matches[1] -notmatch '(?i)^(vegan|vegetarian|gluten|dairy|easy|quick|spicy|mild|optional)') { $exact.Add($Matches[1]) }
+  $sing = $base -replace '(?i)ies$', 'y' -replace '(?i)(?<![su])s$', ''
+  $exact.Add($sing); $exact.Add(($sing -replace ' ', ''))
+  $words = @($base -split ' ' | Where-Object { $_ -and $_ -notmatch '^(with|and|in|of|a|the|style|recipe|easy|quick|homemade|simple|classic|best|my|mom''s|grandma''s)$' })
+  if ($words.Count -ge 3) { $broad.Add(($words[-2..-1] -join ' ')) }
+  if ($words.Count -ge 2) { $broad.Add($words[-1]); $broad.Add(($words[-1] -replace '(?i)ies$', 'y' -replace '(?i)(?<![su])s$', '')) }
+  $tried = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  foreach ($c in $exact) {
+    if (-not $c -or -not $tried.Add($c)) { continue }
+    $r = Get-WikiSummary $c
+    if ($r -and (Test-DishArticle $r)) { return [ordered]@{ text = $r.text; source = $r.source } }
+  }
+  foreach ($c in $broad) {
+    if (-not $c -or $c.Length -lt 4 -or -not $tried.Add($c)) { continue }
+    $r = Get-WikiSummary $c
+    # A broad guess must land on an article that shares a word with the guess (no "Traybake" -> "Cookie").
+    if ($r -and (Test-DishArticle $r) -and $r.desc -match "(?i)\b($FoodWords)" -and (Test-SharedWord $c (Get-WikiTitle $r))) {
+      return [ordered]@{ text = $r.text; source = $r.source }
+    }
+  }
+  return $null
+}
+
+function Get-WikiTitle($r) {
+  $path = ('' + $r.source.url) -replace '^.*/wiki/', ''
+  return ([Uri]::UnescapeDataString($path) -replace '_', ' ')
+}
+
+function Test-SharedWord([string]$a, [string]$b) {
+  $stem = { param($w) ($w.ToLower() -replace '[^a-z]', '' -replace '(ies|es|s)$', '') }
+  $wa = @($a -split '\s+' | ForEach-Object { & $stem $_ } | Where-Object { $_.Length -ge 3 })
+  $wb = @($b -split '\s+' | ForEach-Object { & $stem $_ } | Where-Object { $_.Length -ge 3 })
+  foreach ($x in $wa) { foreach ($y in $wb) { if ($x -eq $y -or ($x.Length -ge 4 -and $y.StartsWith($x)) -or ($y.Length -ge 4 -and $x.StartsWith($y))) { return $true } } }
+  return $false
+}
+
+# Rejects lists, cookware, plants, places, companies and the like.
+function Test-DishArticle($r) {
+  $title = Get-WikiTitle $r
+  if ($title -match '^(List|Lists|Outline|Index|Glossary) of\b') { return $false }
+  $d = '' + $r.desc
+  if ($d -and $d -match '(?i)\b(pan|pot|utensil|tool|cookware|appliance|vessel|container|species|genus|cultivar|plant|tree|family of|company|brand|restaurant|chain|film|song|album|band|novel|town|village|city|county|river|mountain|person|politician|philosophy|movement|diet\b|ideology|practice)\b' -and
+      $d -notmatch '(?i)\b(dish|food|dessert|pastry|bread|soup|stew|sauce|cake|snack|beverage|drink|salad|confection)\b') { return $false }
+  return $true
 }
 
 # ---------------------------------------------------------------- output
 
 $recipes = New-Object System.Collections.ArrayList
 
-function Add-Recipe($r) { [void]$recipes.Add($r) }
+$seenNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+$DependsRx = '(?i)\b(make|prepare|proceed) (the )?same\b|\bsame as\b|\bas for\b|\bas directed (for|in)\b|\bsee (recipe|page|cookbook|above|below)\b|\bpage \d+|' +
+  '\b(preceding|previous|above|following) recipe\b|\brecipe (above|given)\b|\b(given|described) (above|for)\b|\bno\. \d+\b'
+
+# Every source funnels through here: tidy the text, add lifestyle tags, drop exact duplicates.
+function Add-Recipe($r, [bool]$TitleCaseItems = $false) {
+  $r.name = Fix-Name $r.name
+  $key = ($r.name -replace '[^\p{L}\p{N}]', '') + '|' + $r.source.name
+  if (-not $seenNames.Add($key)) { return }
+  $r.ingredients = @(Fix-Ingredients $r.ingredients $TitleCaseItems)
+  $r.steps = @(Fix-Steps $r.steps)
+  if ($r.steps.Count -lt 1 -or $r.ingredients.Count -lt 2) { return }
+  # Recipes that only make sense next to another recipe ("Make same as Stuffing I") are dropped.
+  $method = $r.steps -join ' '
+  if ($method.Length -lt 50 -or $method -match $DependsRx) { return }
+  # Ingredients like "Batter I, III, or V" or "Sauce II" point at other numbered recipes in old cookbooks.
+  if ($r.ingredients | Where-Object { "$($_.qty) $($_.item)" -cmatch '\b[A-Z][a-z]+(\s[A-Z][a-z]+)?\s(I|II|III|IV|V|VI|VII)\b' }) { return }
+  if ($r.culture -and $r.culture.text) { $r.culture.text = Fix-Typos $r.culture.text }
+  $items = @($r.ingredients | ForEach-Object { $_.item })
+  $r['lifestyle'] = Get-LifestyleMask $items $r.allergens $r.diet
+  if (-not $r.Contains('era')) { $r['era'] = 'modern' }
+  [void]$recipes.Add($r)
+}
 
 # ================================================================= TheMealDB
 
@@ -497,7 +852,7 @@ foreach ($m in $meals.Values) {
     youtube     = '' + $m.strYoutube
     culture     = Get-WikiCulture $m.strMeal
     license     = 'TheMealDB'
-  })
+  }) $true
 }
 Write-Host "  kept $($recipes.Count) TheMealDB recipes"
 
@@ -577,7 +932,7 @@ if (-not $SkipWikibooks) {
           if (-not $cuisine -or ($cuisine -in $generic -and $cand -notin $generic)) { $cuisine = $cand }
         }
       }
-      if (-not $cuisine) { continue }   # keep only recipes with a known culture
+      if (-not $cuisine) { $cuisine = Get-CuisineFromName ($p.title -replace '^Cookbook:', '') }
 
       # Split into sections.
       $sections = @{}; $intro = ''; $current = '__intro'
@@ -625,7 +980,12 @@ if (-not $SkipWikibooks) {
           if ($txt.Length -gt 3) { $steps += $txt }
         }
       }
-      if ($ingredients.Count -lt 3 -or $steps.Count -lt 2) { continue }
+      if ($steps.Count -lt 2) {
+        # Some pages write the method as plain paragraphs instead of a numbered list.
+        $steps = @(($sections[$stepKey] -split "`n") | ForEach-Object { Clean-Wiki $_ } |
+          Where-Object { $_.Length -gt 25 -and $_ -notmatch '^[{|!]' })
+      }
+      if ($ingredients.Count -lt 2 -or $steps.Count -lt 1 -or ($steps -join ' ').Length -lt 60) { continue }
 
       $name = $p.title -replace '^Cookbook:', ''
       $timing = Get-Timing $steps $ingredients
@@ -672,8 +1032,8 @@ if (-not $SkipWikibooks) {
       $url = "https://en.wikibooks.org/wiki/" + ($p.title -replace ' ', '_')
       $introText = (($intro -split "`n") | ForEach-Object { Clean-Wiki $_ } |
         Where-Object { $_.Length -gt 60 -and $_ -notmatch '\|' }) -join ' '
-      $culture = Get-WikiCulture ($name -replace '\s*\(.*\)$', '')
-      if (-not $culture -and $introText.Length -gt 80) {
+      $culture = Get-WikiCulture $name
+      if (-not $culture -and $introText.Length -gt 80 -and $introText -match $CultureRx) {
         $culture = [ordered]@{ text = $introText; source = [ordered]@{ name = 'Wikibooks Cookbook'; url = $url } }
       }
 
@@ -711,6 +1071,299 @@ if (-not $SkipWikibooks) {
   Write-Host "  kept $kept Wikibooks recipes"
 }
 
+# ================================================================= shared helpers for file-based sources
+
+$SrcDir = Join-Path $env:TEMP 'fyr-sources'
+New-Item -ItemType Directory -Force $SrcDir | Out-Null
+
+function Get-Repo([string]$repo) {
+  $dir = Join-Path $SrcDir ($repo -replace '/', '__')
+  if (-not (Test-Path (Join-Path $dir '.git'))) {
+    & git clone -q --depth 1 "https://github.com/$repo.git" $dir 2>$null
+  }
+  if (Test-Path $dir) { return $dir }
+  Write-Warning "Could not clone $repo"
+  return $null
+}
+
+function Get-GutenbergText([int]$id) {
+  $file = Join-Path $SrcDir "pg$id.txt"
+  if (-not (Test-Path $file)) {
+    $t = Get-Text "https://www.gutenberg.org/cache/epub/$id/pg$id.txt"
+    if (-not $t) { return $null }
+    [IO.File]::WriteAllText($file, $t, $Utf8)
+  }
+  $text = [IO.File]::ReadAllText($file, $Utf8) -replace "`r", ''
+  $start = $text.IndexOf('*** START OF'); $end = $text.IndexOf('*** END OF')
+  if ($start -ge 0 -and $end -gt $start) { $text = $text.Substring($start, $end - $start) }
+  return $text
+}
+
+function Course-FromText([string]$t) {
+  if ($t -match '(?i)breakfast|pancake|waffle|muffin|porridge|granola|omelet') { return 'breakfast' }
+  if ($t -match '(?i)dessert|cake|cookie|biscuit|pudding|pie\b|tart|sweet|candy|confection|ice cream|brownie|fudge|slice') { return 'dessert' }
+  if ($t -match '(?i)soup|chowder|broth|bisque|stew') { return 'soup' }
+  if ($t -match '(?i)salad|side|snack|bread|dip|appetizer|starter') { return 'side' }
+  return 'main'
+}
+
+function New-Recipe([hashtable]$f) {
+  $items = @($f.ingredients | ForEach-Object { $_.item })
+  $diet = Get-Diet $items
+  $timing = if ($f.timing) { $f.timing } else { Get-Timing $f.steps $f.ingredients }
+  $minutes = $timing.prep + $timing.cook + $timing.passive
+  $estimated = -not $f.statedTime
+  if ($f.statedTime) { $minutes = Round5 $f.statedTime }
+  $cuisine = if ($f.cuisine) { $f.cuisine } else { Get-CuisineFromName $f.name }
+  return [ordered]@{
+    id = $f.id; name = $f.name; author = $f.author; source = $f.source; via = $f.via; image = $f.image
+    cuisine = $cuisine; country = ''; region = Get-Region $cuisine; course = $f.course
+    protein = Get-Protein '' $items $diet $f.name; diet = $diet; allergens = Get-AllergenMask $items
+    minutes = $minutes; time = $timing; timeEstimated = $estimated; servings = $f.servings
+    difficulty = Get-Difficulty $f.ingredients.Count $f.steps.Count ($timing.prep + $timing.cook)
+    ingredients = @($f.ingredients); steps = @($f.steps); tags = @(); youtube = ''
+    culture = $f.culture; license = $f.license; era = $(if ($f.era) { $f.era } else { 'modern' }); vintage = $f.vintage
+  }
+}
+
+function Strip-Markdown([string]$s) {
+  $s = $s -replace '!\[[^\]]*\]\([^)]*\)', '' -replace '\[([^\]]+)\]\([^)]*\)', '$1' -replace '\*\*|__', '' -replace '(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)', ''
+  return Clean-Text $s
+}
+
+# ================================================================= based.cooking + public-domain-recipes (public domain)
+
+function Import-MarkdownSite([string]$repo, [string]$siteName, [string]$siteUrl, [string]$idPrefix) {
+  $dir = Get-Repo $repo
+  if (-not $dir) { return }
+  $kept = 0
+  foreach ($file in Get-ChildItem (Join-Path $dir 'content') -Filter *.md) {
+    if ($file.Name -like '_*') { continue }
+    $text = [IO.File]::ReadAllText($file.FullName, $Utf8) -replace "`r", ''
+    $fm = [regex]::Match($text, '^---\n(.*?)\n---\n', 'Singleline')
+    if (-not $fm.Success) { continue }
+    $front = $fm.Groups[1].Value; $body = $text.Substring($fm.Length)
+    $title = ([regex]::Match($front, '(?m)^title:\s*"?(.*?)"?\s*$')).Groups[1].Value
+    if (-not $script:mdTitles) { $script:mdTitles = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase) }
+    if ($title -and -not $script:mdTitles.Add($title)) { continue }
+    $author = ([regex]::Match($front, '(?m)^author:\s*"?(.*?)"?\s*$')).Groups[1].Value
+    $tags = @([regex]::Matches(([regex]::Match($front, '(?m)^tags:\s*\[(.*)\]')).Groups[1].Value, "'([^']+)'|""([^""]+)""") | ForEach-Object { ($_.Groups[1].Value + $_.Groups[2].Value).ToLower() })
+    if (-not $title -or $tags -contains 'drink' -or $tags -contains 'sauce' -or $tags -contains 'spice') { continue }
+
+    $section = 'intro'; $intro = @(); $ingredients = @(); $steps = @(); $prep = 0; $cook = 0; $servings = ''; $image = ''
+    foreach ($line in ($body -split "`n")) {
+      $l = $line.Trim()
+      if ($l -match '^##\s+(.*)$') {
+        $h = $Matches[1].ToLower()
+        $section = if ($h -match 'ingredient') { 'ing' } elseif ($h -match 'direction|instruction|method|step|preparation') { 'steps' } else { 'other' }
+        continue
+      }
+      if ($l -match '!\[[^\]]*\]\(([^)]+)\)' -and -not $image) { $image = $Matches[1]; if ($image -notmatch '^https?:') { $image = $siteUrl.TrimEnd('/') + '/' + $image.TrimStart('/') } }
+      if ($l -match '(?i)prep(aration)? time:\s*(.+)$') { $prep = Parse-Minutes $Matches[2]; continue }
+      if ($l -match '(?i)cook(ing)? time:\s*(.+)$') { $cook = Parse-Minutes $Matches[2]; continue }
+      if ($l -match '(?i)servings?:\s*(.+)$') { $servings = Strip-Markdown $Matches[1]; continue }
+      if ($l -match '^#') { continue }
+      switch ($section) {
+        'intro' { if ($l.Length -gt 30 -and $l -notmatch '^[-*!]') { $intro += Strip-Markdown $l } }
+        'ing'   { if ($l -match '^[-*+]\s+(.+)$') { $ingredients += ,([ordered]@{ item = (Normalize-Qty (Strip-Markdown $Matches[1])); qty = '' }) } }
+        'steps' { if ($l -match '^(\d+[.)]|[-*+])\s+(.+)$') { $steps += Strip-Markdown $Matches[2] } elseif ($l.Length -gt 30 -and $l -notmatch '^!') { $steps += Strip-Markdown $l } }
+      }
+    }
+    if ($ingredients.Count -lt 2 -or $steps.Count -lt 1) { continue }
+
+    $slug = [IO.Path]::GetFileNameWithoutExtension($file.Name)
+    $cuisine = ''
+    foreach ($t in $tags) { $c = (Get-Culture).TextInfo.ToTitleCase($t); if ($Regions.ContainsKey($c)) { $cuisine = $c; break } }
+    $timing = Get-Timing $steps $ingredients
+    $stated = 0
+    if ($prep -or $cook) { $timing.prep = [int][Math]::Max(5, (Round5 ([Math]::Max($prep, 5)))); $timing.cook = [int]$(if ($cook) { Round5 $cook } else { 0 }); $stated = $timing.prep + $timing.cook + $timing.passive }
+    $culture = Get-WikiCulture $title
+    $introText = $intro -join ' '
+    if (-not $culture -and $introText -match $CultureRx) { $culture = [ordered]@{ text = $introText; source = [ordered]@{ name = $siteName; url = "$siteUrl/$slug/" } } }
+    Add-Recipe (New-Recipe @{
+      id = "$idPrefix$slug"; name = $title
+      author = $(if ($author) { "$author on $siteName" } else { "$siteName contributors" })
+      source = [ordered]@{ name = $siteName; url = "$siteUrl/$slug/" }; via = [ordered]@{ name = $siteName; url = $siteUrl }
+      image = $image; cuisine = $cuisine; course = (Course-FromText (($tags -join ' ') + ' ' + $title))
+      ingredients = $ingredients; steps = $steps; timing = $timing; statedTime = $stated; servings = $servings
+      culture = $culture; license = 'Public domain (Unlicense)'
+    })
+    $kept++
+  }
+  Write-Host "  kept $kept recipes from $siteName"
+}
+
+if (-not $SkipMarkdown) {
+  Write-Host 'Public-domain recipe sites...'
+  Import-MarkdownSite 'LukeSmithxyz/based.cooking' 'based.cooking' 'https://based.cooking' 'b'
+  Import-MarkdownSite 'ronaldl29/public-domain-recipes' 'Public Domain Recipes' 'https://publicdomainrecipes.com' 'p'
+
+  # ---------------------------------------------------------------- Wickham family recipes (CC BY 4.0)
+  # Only the family's own recipes: ones copied from books, magazines or websites are skipped.
+  $dir = Get-Repo 'hadley/recipes'
+  if ($dir) {
+    $kept = 0
+    $courseByDir = @{ biscuits = 'dessert'; cakes = 'dessert'; desserts = 'dessert'; slices = 'dessert'; sweets = 'dessert';
+      breads = 'side'; 'muffins-scones' = 'breakfast'; entrees = 'side' }
+    foreach ($file in Get-ChildItem (Join-Path $dir 'recipes') -Recurse -Filter *.md) {
+      $folder = $file.Directory.Name
+      if ($folder -in @('sauces', 'misc', 'recipes')) { continue }
+      $text = [IO.File]::ReadAllText($file.FullName, $Utf8) -replace "`r", ''
+      $src = ([regex]::Match($text, '(?im)^source:\s*(.+)$')).Groups[1].Value
+      if ($src -and $src -notmatch '(?i)notebook|grandma|nana|mum|mom|aunt|family|wickham|hadley|jeff|rita|granny') { continue }
+      $title = ([regex]::Match($text, '(?m)^#\s+(.+)$')).Groups[1].Value
+      if (-not $title) { continue }
+      $ingredients = @(); $steps = @()
+      foreach ($line in ($text -split "`n")) {
+        $l = $line.Trim()
+        if ($l -match '^#' -or $l -match '(?i)^source:') { continue }
+        if ($l -match '^[-*]\s+(.+)$') {
+          $it = Strip-Markdown $Matches[1]
+          if ($it -cmatch '^[A-Z ]+:$') { continue }        # "CRUNCHY TOPPING:" sub-headings
+          $ingredients += ,([ordered]@{ item = (Normalize-Qty ($it -replace '\b(\d+(?:/\d+)?)\s*t\b', '$1 tsp' -replace '\b(\d+(?:/\d+)?)\s*T\b', '$1 tbsp' -replace '\b(\d+(?:/\d+)?)\s*[Cc]\b', '$1 cup')); qty = '' })
+        } elseif ($l.Length -gt 15) {
+          foreach ($s in [regex]::Split((Strip-Markdown $l), '(?<=[.!?])\s{1,}(?=[A-Z])')) { if ($s.Length -gt 3) { $steps += $s } }
+        }
+      }
+      if ($ingredients.Count -lt 2 -or $steps.Count -lt 1) { continue }
+      $rel = $file.FullName.Substring($dir.Length + 1) -replace '\\', '/'
+      $course = if ($courseByDir.ContainsKey($folder)) { $courseByDir[$folder] } else { 'main' }
+      $url = "https://github.com/hadley/recipes/blob/main/$rel"
+      Add-Recipe (New-Recipe @{
+        id = 'h' + ($rel -replace '^recipes/', '' -replace '\.md$', '' -replace '[^a-z0-9]+', '-'); name = $title
+        author = 'The Wickham family'; source = [ordered]@{ name = 'Wickham family recipes'; url = $url }
+        via = [ordered]@{ name = 'GitHub'; url = 'https://github.com/hadley/recipes' }
+        image = ''; cuisine = ''; course = $course; ingredients = $ingredients; steps = $steps; servings = ''
+        culture = (Get-WikiCulture $title); license = 'CC BY 4.0'
+      })
+      $kept++
+    }
+    Write-Host "  kept $kept Wickham family recipes"
+  }
+}
+
+# ================================================================= Project Gutenberg (public domain, vintage)
+
+$BookNotes = @{
+  boston = [ordered]@{ text = 'From The Boston Cooking-School Cook Book (1896) by Fannie Merritt Farmer. It popularized level, standardized measurements (cups and spoons) in American home kitchens, and stayed one of the best-selling cookbooks in the United States for decades.'; source = [ordered]@{ name = 'Project Gutenberg'; url = 'https://www.gutenberg.org/ebooks/65061' } }
+  beeton = [ordered]@{ text = "From Mrs Beeton's Book of Household Management (1861) by Isabella Beeton. It was a Victorian best-seller that shaped how British households cooked and ran their kitchens for generations, and it was one of the first cookbooks to list ingredients before the method."; source = [ordered]@{ name = 'Project Gutenberg'; url = 'https://www.gutenberg.org/ebooks/10136' } }
+}
+
+function To-TitleCase([string]$s) {
+  $t = (Get-Culture).TextInfo.ToTitleCase($s.ToLower())
+  $t = $t -replace "'S\b", "'s"
+  $t = [regex]::Replace($t, '\b(And|Or|Of|With|In|A|The|To|For|On|Au|À|La|Le|De|En)\b', { param($m) $m.Value.ToLower() })
+  return $t.Substring(0, 1).ToUpper() + $t.Substring(1)
+}
+
+$VintageSkip = '(?i)sauce|gravy|pickle|ketchup|catsup|vinegar|\bwine\b|\bbeer\b|\bale\b|punch|cordial|preserv|to keep|clarif|\bjam\b|' +
+  'marmalade|liqueur|lemonade|syrup|essence|brandy|negus|posset|invalid|beef tea|gruel|panada|toast.and.water|\bstock\b|' +
+  'seasoning|powder|forcemeat|force-meat|dressing|frosting|filling|icing|to cure|to dry|to salt|to pot\b|potted|' +
+  'tea\b|coffee|cocoa\b|chocolate$|glaze|garnish|caramel$|to boil (water|rice)$|^to |^how to|general|observations|' +
+  '^batter|^(plain |puff |flaky |short |rich )?(paste|pastry|crust|dough)( [ivx]+)?$|^mixture|^(white|brown) roux'
+
+if (-not $SkipGutenberg) {
+  Write-Host 'Project Gutenberg: The Boston Cooking-School Cook Book (1896)...'
+  $text = Get-GutenbergText 65061
+  if ($text) {
+    $chapterCourse = [ordered]@{
+      'BREAD' = 'side'; 'BISCUITS, BREAKFAST' = 'breakfast'; 'CEREALS' = 'breakfast'; 'EGGS' = 'breakfast'; 'SOUPS' = 'soup';
+      'FISH' = 'main'; 'BEEF' = 'main'; 'LAMB' = 'main'; 'VEAL' = 'main'; 'SWEETBREADS' = 'main'; 'PORK' = 'main'; 'POULTRY' = 'main';
+      'VEGETABLES' = 'side'; 'POTATOES' = 'side'; 'SALADS' = 'side'; 'ENTRÉES' = 'main'; 'HOT PUDDINGS' = 'dessert';
+      'COLD DESSERTS' = 'dessert'; 'ICES' = 'dessert'; 'PASTRY' = 'dessert'; 'PIES' = 'dessert'; 'GINGERBREADS' = 'dessert';
+      'CAKE' = 'dessert'; 'FANCY CAKES' = 'dessert'; 'SANDWICHES' = 'side'; 'RECIPES FOR THE CHAFING' = 'main'
+    }
+    $skipChapters = 'BEVERAGES|SOUP GARNISH|SAUCES|FILLINGS|FRUITS|HINTS|COMBINATIONS|^FOOD$|^COOKERY$'
+    $lines = $text -split "`n"
+    $chapter = ''; $course = $null; $kept = 0
+    $i = 0
+    while ($i -lt $lines.Count) {
+      $line = $lines[$i]
+      if ($line -match '^\s*CHAPTER [IVXLC]+\s*$') {
+        $j = $i + 1; while ($j -lt $lines.Count -and -not $lines[$j].Trim()) { $j++ }
+        $chapter = $lines[$j].Trim(); $course = $null
+        foreach ($k in $chapterCourse.Keys) { if ($chapter.StartsWith($k)) { $course = $chapterCourse[$k]; break } }
+        if ($chapter -match $skipChapters) { $course = $null }
+        $i = $j + 1; continue
+      }
+      # A recipe: centred title, blank line, centred ingredient lines, then method paragraphs.
+      $isTitle = $line -match '^\s{10,}\S' -and $i -gt 0 -and -not $lines[$i - 1].Trim() -and ($i + 1) -lt $lines.Count -and -not $lines[$i + 1].Trim()
+      if ($course -and $isTitle) {
+        $title = $line.Trim()
+        $j = $i + 2; $ings = @()
+        while ($j -lt $lines.Count -and $lines[$j] -match '^\s{10,}\S') { $ings += $lines[$j].Trim(); $j++ }
+        $method = @(); $para = ''
+        while ($j -lt $lines.Count) {
+          $l = $lines[$j]
+          if ($l -match '^\s{10,}\S' -or $l -match '^\s*CHAPTER [IVXLC]+\s*$') { break }
+          if ($l.Trim()) { $para = ($para + ' ' + $l.Trim()).Trim() } elseif ($para) { $method += $para; $para = '' }
+          $j++
+        }
+        if ($para) { $method += $para }
+        $i = $j
+        if ($ings.Count -lt 2 -or $method.Count -lt 1 -or $title -match $VintageSkip -or $title.Length -gt 60) { continue }
+        $method = @($method | ForEach-Object { $_ -replace '=([^=]+)=', '$1' -replace '_([^_]+)_', '$1' })
+        $steps = @(); foreach ($p in $method) { foreach ($s in [regex]::Split($p, '(?<=[.!?])\s+(?=[A-Z])')) { if ($s.Length -gt 3) { $steps += $s } } }
+        $ingredients = @($ings | ForEach-Object { ,([ordered]@{ item = (Normalize-Qty $_); qty = '' }) })
+        $id = 'g' + ($title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+        Add-Recipe (New-Recipe @{
+          id = "${id}-1896"; name = $title; author = 'Fannie Merritt Farmer (1896)'
+          source = [ordered]@{ name = 'The Boston Cooking-School Cook Book'; url = 'https://www.gutenberg.org/ebooks/65061' }
+          via = [ordered]@{ name = 'Project Gutenberg'; url = 'https://www.gutenberg.org/ebooks/65061' }
+          image = ''; cuisine = 'American'; course = $course; ingredients = $ingredients; steps = $steps; servings = ''
+          culture = $BookNotes.boston; license = 'Public domain'; era = 'vintage'
+          vintage = [ordered]@{ year = 1896; book = 'The Boston Cooking-School Cook Book' }
+        })
+        $kept++
+        continue
+      }
+      $i++
+    }
+    Write-Host "  kept $kept recipes"
+  }
+
+  Write-Host "Project Gutenberg: Mrs Beeton's Book of Household Management (1861)..."
+  $text = Get-GutenbergText 10136
+  if ($text) {
+    $kept = 0
+    # Each recipe: an UPPERCASE title line, then "123. INGREDIENTS.--...", "_Mode_.--...", "_Time_.--...", "_Sufficient_ for ..."
+    $rx = '(?ms)^\s*([A-Z][A-Z0-9 ,''\-&()\.À-Ý]{3,80}?)\.?\s*\n\s*\n\s*(\d+)\.\s*INGREDIENTS\.?\s*--\s*(.*?)\n\s*\n\s*_?Mode_?\.?\s*--\s*(.*?)(?=\n\s*\n\s*_?(?:Time|Average cost|Sufficient|Seasonable|Note)_?\b|\n\s*\n\s*[A-Z][A-Z ,''\-]{3,}\.?\s*\n)(.*?)(?=\n\s*\n\s*[A-Z][A-Z0-9 ,''\-&()]{3,80}\.?\s*\n\s*\n\s*\d+\.|\z)'
+    foreach ($m in [regex]::Matches($text, $rx)) {
+      $title = To-TitleCase ($m.Groups[1].Value.Trim().TrimEnd('.'))
+      if ($title -match $VintageSkip -or $title.Length -lt 3) { continue }
+      $ingText = Clean-Text ($m.Groups[3].Value -replace '_', '')
+      $ingText = $ingText -replace '^(?i)(for|to) [^,;]*?(allow|take|use)\s+', ''
+      $ingredients = @([regex]::Split($ingText, '[;,]\s+(?=(?:\d|½|¼|¾|a |an |the |some |sufficient|salt|pepper|[A-Z]|[a-z]+ (?:of|to)\b))') |
+        ForEach-Object { ($_ -replace '^(and|with)\s+', '').Trim(' ', '.', ';', ',') } | Where-Object { $_.Length -gt 1 } |
+        ForEach-Object { ,([ordered]@{ item = (Normalize-Qty ($_ -replace '\b(oz|lb|lbs|pt|qt)\.', '$1')); qty = '' }) })
+      $mode = Clean-Text ($m.Groups[4].Value -replace '_', '')
+      $steps = @([regex]::Split($mode, '(?<=[.!?])\s+(?=[A-Z])') | Where-Object { $_.Length -gt 3 })
+      $rest = $m.Groups[5].Value
+      $stated = Parse-Minutes (([regex]::Match($rest, '(?i)_?Time_?\.?\s*--\s*([^\n_]+)')).Groups[1].Value)
+      $servings = ([regex]::Match($rest, '(?i)_?Sufficient_?\s*(?:for)?\s*([^\n_.]+)')).Groups[1].Value.Trim()
+      if ($ingredients.Count -lt 2 -or $steps.Count -lt 1) { continue }
+      $timing = Get-Timing $steps $ingredients
+      if ($stated -gt 0) {
+        $hands = $timing.prep + $timing.cook
+        if ($hands -ge $stated) { $timing.cook = [int][Math]::Max(0, (Round5 $stated) - $timing.prep); $timing.passive = 0; $timing.passiveWhy = @() }
+        else { $timing.passive = [int][Math]::Min($timing.passive, $stated - $hands); $timing.cook = [int]((Round5 $stated) - $timing.prep - $timing.passive) }
+        if ($timing.cook -lt 0) { $timing.prep = Round5 $stated; $timing.cook = 0 }
+      }
+      Add-Recipe (New-Recipe @{
+        id = "mb$($m.Groups[2].Value)"; name = $title; author = 'Isabella Beeton (1861)'
+        source = [ordered]@{ name = "Mrs Beeton's Book of Household Management"; url = 'https://www.gutenberg.org/ebooks/10136' }
+        via = [ordered]@{ name = 'Project Gutenberg'; url = 'https://www.gutenberg.org/ebooks/10136' }
+        image = ''; cuisine = 'British'; course = (Course-FromText $title); ingredients = $ingredients; steps = $steps
+        timing = $timing; statedTime = $stated; servings = ($servings -replace '(?i)^for\s+', '')
+        culture = $BookNotes.beeton; license = 'Public domain'; era = 'vintage'
+        vintage = [ordered]@{ year = 1861; book = "Mrs Beeton's Book of Household Management" }
+      })
+      $kept++
+    }
+    Write-Host "  kept $kept recipes"
+  }
+}
+
 # ================================================================= write files
 
 if (Test-Path $RecDir) { Remove-Item -Recurse -Force $RecDir }
@@ -723,6 +1376,7 @@ foreach ($r in $recipes) {
   [void]$index.Add([ordered]@{
     id = $r.id; n = $r.name; c = $r.cuisine; g = $r.region; k = $r.course; p = $r.protein
     t = $r.minutes; h = $r.time.prep + $r.time.cook; d = $r.difficulty; v = $r.diet; x = $r.allergens
+    y = $r.lifestyle; e = $(if ($r.era -eq 'vintage') { 1 } else { 0 })
   })
 }
 $meta = [ordered]@{ generated = (Get-Date).ToString('yyyy-MM-dd'); count = $index.Count; recipes = @($index) }

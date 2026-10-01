@@ -102,12 +102,12 @@ export const REGIONS = {
   Oceania: 'Oceanian cooking mixes Indigenous and Pacific Islander traditions with British, Asian and Mediterranean influences.',
   'South Asia': 'South Asian cooking is known for complex spice blends, rice and breads, with food closely tied to religion and festivals.',
   'Southeast Asia': 'Southeast Asian food balances sweet, sour, salty and spicy, with rice, fresh herbs and fermented sauces at its heart.',
-  Global: 'This dish has travelled around the world and been adopted by home cooks in many kitchens, each adding their own twist.'
+  Global: "We couldn't trace this recipe to one country. Dishes like it turn up in home kitchens in many places, and every cook adds their own twist. If you know where it comes from, the original source may tell you more."
 };
 
 export function cultureFor(recipe) {
   if (recipe.culture && recipe.culture.text) return recipe.culture;
   const text = CUISINES[recipe.cuisine] || REGIONS[recipe.region] || REGIONS.Global;
-  const label = recipe.cuisine ? `${recipe.cuisine} cuisine` : 'Global home cooking';
+  const label = recipe.cuisine ? `${recipe.cuisine} cuisine` : 'home cooking around the world';
   return { text, source: null, label };
 }

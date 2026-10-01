@@ -6,7 +6,7 @@ Bored and hungry? Stir the pot and get a **random recipe from around the world**
 
 - **Start cooking**: the pot boils, the ladle stirs, the pot drops to the bottom of the screen and a mystery recipe pops up.
 - **3 stirs per day** per account, so nobody can reroll until they find something safe.
-- **Full gamble** mode uses every recipe. **Picky eater** mode filters by region, culture, total time, hands-on time, meal, diet (pescatarian / vegetarian / vegan), allergies and things to avoid (gluten, dairy, eggs, peanuts, tree nuts, fish, shellfish, soy, sesame, pork, alcohol), difficulty and main ingredient.
+- **Full gamble** mode uses every recipe. **Picky eater** mode filters by region, culture, total time, hands-on time, meal, diet (pescatarian / vegetarian / vegan), lifestyle (halal-friendly, kosher-style, low-carb, keto, paleo, Whole30, no added sugar), allergies (gluten, dairy, eggs, peanuts, tree nuts, fish, shellfish, soy, sesame, mustard, celery, sulfites), other things to avoid (pork, red meat, alcohol, spicy heat, nightshades, onion & garlic, mushrooms, coconut, corn), recipe age (modern or vintage), difficulty and main ingredient. Diet and allergen tags are worked out from ingredient names, so they are approximations, not certifications.
 - **Timing** is split into prep, cook and hands-off time (marinating, chilling, rising...), estimated from each step when the source doesn't give a time.
 - **US / Metric toggle** converts grams, ml, cups, ounces and oven temperatures (common baking ingredients go to cups and spoons by weight), plus a ½× to 3× batch scaler.
 - Every recipe shows the **name, author, full ingredient list and method**, a **cultural-significance note**, and a **link to the original source** so you can review it there too.
@@ -20,11 +20,16 @@ Bored and hungry? Stir the pot and get a **random recipe from around the world**
 
 | Source | What it gives | License |
 |---|---|---|
-| [TheMealDB](https://www.themealdb.com/) | ~790 recipes with cuisine, ingredients, method, photos and the original source link | Free API |
-| [Wikibooks Cookbook](https://en.wikibooks.org/wiki/Cookbook) | Hundreds more recipes tagged by country | CC BY-SA 4.0 |
+| [TheMealDB](https://www.themealdb.com/) | ~790 recipes with cuisine, photos and the original source link | Free API |
+| [Wikibooks Cookbook](https://en.wikibooks.org/wiki/Cookbook) | ~2,500 recipes from around the world | CC BY-SA 4.0 |
+| [based.cooking](https://github.com/LukeSmithxyz/based.cooking) / [Public Domain Recipes](https://github.com/ronaldl29/public-domain-recipes) | ~390 community recipes | Public domain (Unlicense) |
+| [Wickham family recipes](https://github.com/hadley/recipes) | ~90 family recipes (ones copied from books or websites are skipped) | CC BY 4.0 |
+| [Project Gutenberg](https://www.gutenberg.org/) | ~950 vintage recipes from *The Boston Cooking-School Cook Book* (1896) and *Mrs Beeton's Book of Household Management* (1861) | Public domain |
 | [Wikipedia](https://en.wikipedia.org/) | Cultural-significance summaries for dishes | CC BY-SA 4.0 |
 
-Sites whose terms forbid scraping (Allrecipes, Yelp, ...) are **not** crawled. Star ratings are not copied from anywhere: the hidden rating is the average from FindYourRecipe cooks, and it fills in as people cook and rate.
+The harvester also cleans the text: it fixes common misspellings, missing spaces after periods, "1 chopped Garlic Clove" style ingredient order, heading-only steps, and drops recipes that only say "make same as the recipe above".
+
+Sites whose terms forbid scraping (Allrecipes, Yelp, Fandom, ...) are **not** crawled. Star ratings are not copied from anywhere: the hidden rating is the average from FindYourRecipe cooks, and it fills in as people cook and rate.
 
 TheMealDB asks public apps to [support the project](https://www.themealdb.com/api.php) if they use it in production.
 
