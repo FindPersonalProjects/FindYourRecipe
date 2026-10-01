@@ -92,9 +92,20 @@ class SupabaseStore {
     return { recipeId: row.recipe_id, usedToday: row.used_today };
   }
 
+  async joinChallenge(recipeId, week) {
+    const { error } = await this.sb.rpc('join_challenge', { p_recipe_id: recipeId, p_week: week });
+    if (error) throw friendly(error);
+  }
+
+  async challengeCount(week) {
+    const { data, error } = await this.sb.rpc('challenge_count', { p_week: week });
+    if (error) throw friendly(error);
+    return data || 0;
+  }
+
   async history() {
     const [draws, ratings] = await Promise.all([
-      this.sb.from('draws').select('recipe_id, created_at').order('created_at', { ascending: false }).limit(500),
+      this.sb.from('draws').select('recipe_id, created_at, kind, week').order('created_at', { ascending: false }).limit(500),
       this.sb.from('ratings').select('recipe_id, stars, note, created_at')
     ]);
     if (draws.error) throw friendly(draws.error);
@@ -120,6 +131,31 @@ class SupabaseStore {
     const { data, error } = await this.sb.from('saved_recipes').select('recipe_id, created_at').order('created_at', { ascending: false });
     if (error) throw friendly(error);
     return data;
+  }
+
+  // Dish photos live in a private storage bucket, one per user per recipe.
+  #photoPath(recipeId) { return `${this.session.user.id}/${recipeId}.jpg`; }
+
+  async setPhoto(recipeId, blob) {
+    const { error } = await this.sb.storage.from('dish-photos')
+      .upload(this.#photoPath(recipeId), blob, { upsert: true, contentType: 'image/jpeg' });
+    if (error) throw friendly(error);
+  }
+
+  async removePhoto(recipeId) {
+    const { error } = await this.sb.storage.from('dish-photos').remove([this.#photoPath(recipeId)]);
+    if (error) throw friendly(error);
+  }
+
+  async photos() {
+    const uid = this.session.user.id;
+    const { data, error } = await this.sb.storage.from('dish-photos').list(uid, { limit: 1000 });
+    if (error || !data?.length) return {};
+    const paths = data.map(f => `${uid}/${f.name}`);
+    const { data: signed } = await this.sb.storage.from('dish-photos').createSignedUrls(paths, 3600);
+    const out = {};
+    for (const s of signed || []) if (s.signedUrl) out[s.path.split('/')[1].replace(/\.jpg$/, '')] = `${s.signedUrl}`;
+    return out;
   }
 
   async sendFeedback(fb) {
@@ -182,7 +218,19 @@ class LocalStore {
 
   async usedToday() {
     const today = localDay();
-    return this.#me().draws.filter(d => d.day === today).length;
+    return this.#me().draws.filter(d => d.day === today && d.kind !== 'challenge').length;
+  }
+
+  // The weekly challenge doesn't use one of the 3 daily stirs.
+  async joinChallenge(recipeId, week) {
+    const me = this.#me();
+    if (me.draws.some(d => d.kind === 'challenge' && d.week === week)) return;
+    me.draws.unshift({ recipe_id: recipeId, day: localDay(), kind: 'challenge', week, created_at: new Date().toISOString() });
+    writeLS(this.state);
+  }
+
+  async challengeCount(week) {
+    return Object.values(this.state.users).filter(u => u.draws.some(d => d.kind === 'challenge' && d.week === week)).length;
   }
 
   async draw(candidates) {
@@ -225,6 +273,36 @@ class LocalStore {
   }
 
   async saved() { return this.#me().saved.map(s => ({ ...s })); }
+
+  // Demo mode keeps small, compressed photos in browser storage.
+  #photoKey(recipeId) { return `fyr:photo:${this.state.current}:${recipeId}`; }
+
+  async setPhoto(recipeId, blob) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+    try { localStorage.setItem(this.#photoKey(recipeId), dataUrl); }
+    catch { throw new StoreError('ERROR', 'Your browser is out of space for photos. Remove an older photo and try again.'); }
+  }
+
+  async removePhoto(recipeId) {
+    try { localStorage.removeItem(this.#photoKey(recipeId)); } catch { /* ignore */ }
+  }
+
+  async photos() {
+    const out = {};
+    try {
+      const prefix = `fyr:photo:${this.state.current}:`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k.startsWith(prefix)) out[k.slice(prefix.length)] = localStorage.getItem(k);
+      }
+    } catch { /* ignore */ }
+    return out;
+  }
 
   // Demo mode has no server to receive feedback; the page offers a GitHub issue instead.
   async sendFeedback() { return { delivered: false }; }

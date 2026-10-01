@@ -13,6 +13,11 @@ Bored and hungry? Stir the pot and get a **random recipe from around the world**
 - **Hidden rating**: stars stay a mystery until you rate the dish. Then you see the community rating, how you compare, and a verdict (Jackpot! / Brave soul / ...).
 - **My Cookbook**: dishes waiting to be rated, saved favorites, and your cooked-and-rated history with stats.
 - Extras: ingredient checklist, **cook mode** (one step at a time, keeps the screen awake), tap-to-start **kitchen timers** on any time in the steps, copy shopping list, print.
+- **Weekly challenge**: everyone gets the same mystery recipe each week (it doesn't use a daily stir).
+- **Share card**: a ready-to-post image of your gamble and your verdict.
+- **Badges** (Globe Trotter, Time Traveler, Honest Critic, …) and **dish photos** of how your cooking turned out (private to you).
+- **Install as an app** (works offline for recipes you've opened), **dark mode**, and a daily **"pot refilled" calendar reminder**.
+- Tidy filter panel: the main filters up front, the rest under "More filters", with removable chips for everything that's on.
 
 ## Where the recipes come from
 

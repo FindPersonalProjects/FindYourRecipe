@@ -5,11 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Find Your Recipe</title>
   <meta name="description" content="Stir the pot, get a random recipe from around the world, cook it, then find out if it was a 1-star flop or a 5-star feast.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%B2%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#C8442F">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Find Recipe">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,800&family=Nunito:wght@400;600;700;800&family=Caveat:wght@600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <script>
+    try { const t = localStorage.getItem('fyr:theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
+  </script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -28,6 +36,8 @@
         <a href="#/" data-nav="kitchen">Kitchen</a>
         <a href="#/cookbook" data-nav="cookbook">My Cookbook <span class="badge" id="pendingBadge" hidden></span></a>
         <a href="#/feedback" data-nav="feedback">Feedback</a>
+        <button class="btn btn-small btn-ghost" id="installBtn" type="button" hidden>📲 Install</button>
+        <button class="icon-btn" id="themeBtn" type="button" aria-label="Theme: match my device" title="Theme: match my device">🌓</button>
         <button class="btn btn-small btn-ghost" id="accountBtn" type="button">Sign in</button>
       </nav>
     </div>
@@ -45,10 +55,20 @@
         <h1 class="hero-title">What's cooking <em>today</em>?</h1>
         <p class="hero-sub">Stir the pot and get a random recipe from somewhere in the world. It could be a 5-star feast or a 1-star flop, and you won't know which until you've cooked it and rated it yourself.</p>
 
+        <section class="challenge" id="challenge" hidden aria-labelledby="challengeTitle">
+          <div class="challenge-icon" aria-hidden="true">🏆</div>
+          <div class="challenge-body">
+            <h2 id="challengeTitle">This week's challenge</h2>
+            <p id="challengeText"></p>
+          </div>
+          <button class="btn btn-small btn-primary" id="challengeBtn" type="button">Take the challenge</button>
+        </section>
+
         <div class="spoons" id="spoons" aria-live="polite">
           <span class="spoons-label">Stirs left today</span>
           <span class="spoon-row" id="spoonRow"></span>
           <span class="spoons-reset" id="spoonsReset"></span>
+          <button type="button" class="icon-btn icon-btn-small" id="remindBtn" title="Remind me when the pot refills" aria-label="Remind me when the pot refills">🔔</button>
         </div>
 
         <div class="mode-toggle" role="radiogroup" aria-label="Gamble mode">
@@ -75,20 +95,26 @@
               <select id="f-cuisine"></select>
             </label>
             <fieldset class="chips" data-filter="time"><legend>Total time until it's on the table <span class="legend-note">(includes marinating, chilling, rising)</span></legend></fieldset>
-            <fieldset class="chips" data-filter="hands"><legend>Hands-on time <span class="legend-note">(actual work in the kitchen)</span></legend></fieldset>
-            <fieldset class="chips" data-filter="course"><legend>Meal</legend></fieldset>
             <fieldset class="chips" data-filter="diet"><legend>Diet</legend></fieldset>
-            <fieldset class="chips chips-multi" id="lifestyleChips"><legend>Must also be <span class="legend-note">(pick any; based on ingredients, not certified)</span></legend></fieldset>
             <fieldset class="chips chips-avoid" id="allergyChips" data-group="allergy"><legend>Allergies <span class="legend-note">(pick any)</span></legend></fieldset>
-            <fieldset class="chips chips-avoid" id="avoidChips" data-group="avoid"><legend>Other things to avoid</legend></fieldset>
-            <fieldset class="chips" data-filter="era"><legend>Recipe age</legend></fieldset>
-            <fieldset class="chips" data-filter="difficulty"><legend>Difficulty</legend></fieldset>
-            <fieldset class="chips" data-filter="protein"><legend>Main ingredient</legend></fieldset>
           </div>
+          <details class="more-filters" id="moreFilters">
+            <summary>More filters <span class="more-count" id="moreCount"></span></summary>
+            <div class="filter-grid">
+              <fieldset class="chips" data-filter="course"><legend>Meal</legend></fieldset>
+              <fieldset class="chips" data-filter="hands"><legend>Hands-on time <span class="legend-note">(actual work in the kitchen)</span></legend></fieldset>
+              <fieldset class="chips chips-multi" id="lifestyleChips"><legend>Must also be <span class="legend-note">(pick any; based on ingredients, not certified)</span></legend></fieldset>
+              <fieldset class="chips chips-avoid" id="avoidChips" data-group="avoid"><legend>Other things to avoid</legend></fieldset>
+              <fieldset class="chips" data-filter="protein"><legend>Main ingredient</legend></fieldset>
+              <fieldset class="chips" data-filter="difficulty"><legend>Difficulty</legend></fieldset>
+              <fieldset class="chips" data-filter="era"><legend>Recipe age</legend></fieldset>
+            </div>
+          </details>
           <p class="filter-note">Filters narrow down what's in the pot, but the star rating always stays a secret.
             Allergens are detected automatically from ingredient names, so <strong>always check the ingredient list</strong> if an allergy is serious.</p>
         </form>
 
+        <ul class="active-filters" id="activeFilters" aria-label="Active filters" hidden></ul>
         <p class="pot-count" id="potCount" aria-live="polite">&nbsp;</p>
 
         <button class="btn btn-start" id="startBtn" type="button">
@@ -182,6 +208,8 @@
         <p class="muted" id="cookbookWho"></p>
       </div>
       <div class="stats" id="stats"></div>
+      <h2 class="section-title">Badges <span class="muted" id="badgeCount" style="font-size:15px;font-family:var(--font-body)"></span></h2>
+      <div class="badges" id="badges"></div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" data-tab="pending" aria-selected="true">Waiting to be rated</button>
         <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
@@ -194,6 +222,40 @@
     <section class="view" id="view-recipe" hidden>
       <a href="#/cookbook" class="back-link">← Back to my cookbook</a>
       <article class="recipe-card" id="recipeCardStatic"></article>
+    </section>
+
+    <!-- ============================================================ PRIVACY -->
+    <section class="view" id="view-privacy" hidden>
+      <article class="prose">
+        <h1>Privacy, in plain words</h1>
+        <p class="muted">Last updated October 1, 2026</p>
+
+        <h2>What we keep</h2>
+        <ul>
+          <li><strong>Your account:</strong> your email address, password (stored securely by our database provider, never readable by us) and your cook name.</li>
+          <li><strong>Your kitchen:</strong> which recipes you drew and when, your star ratings and kitchen notes, recipes you saved, and challenges you joined.</li>
+          <li><strong>Dish photos</strong> you choose to upload. Only you can see them.</li>
+          <li><strong>Feedback</strong> you send, plus your email only if you type it in so we can reply.</li>
+        </ul>
+        <p>Your star ratings are combined with everyone else's to make the community rating. Other people never see your name, notes or photos.</p>
+
+        <h2>Where it lives</h2>
+        <p>Accounts and data are stored with <a href="https://supabase.com/privacy" target="_blank" rel="noopener">Supabase</a>, our database provider.
+          In demo mode, everything stays in your own browser and never leaves your device.
+          Your theme, units and filter choices are always remembered only in your browser.</p>
+
+        <h2>What we don't do</h2>
+        <ul>
+          <li>No ads, no selling or sharing your data, no tracking or advertising cookies, no analytics.</li>
+          <li>We only email you for account things you ask for, like confirming your address or resetting your password.</li>
+        </ul>
+
+        <h2>Other sites involved</h2>
+        <p>Fonts load from Google Fonts, and recipe photos load from the sites they came from (such as TheMealDB and Wikimedia Commons). Like any website, those servers can see your IP address when your browser fetches the files. Links to original recipes take you to other sites with their own privacy policies.</p>
+
+        <h2>Your choices</h2>
+        <p>You can sign out at any time. To have your account and everything in it deleted, send a request through the <a href="#/feedback">Feedback page</a> with the email you signed up with, and it will be removed.</p>
+      </article>
     </section>
 
     <!-- ============================================================ FEEDBACK -->
@@ -266,6 +328,7 @@
       <a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> (public domain). Cultural notes come from
       <a href="https://www.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (CC BY-SA).
       Every recipe links back to its original source, so you can rate it there too.</p>
+    <p class="footer-links"><a href="#/privacy">Privacy</a> · <a href="#/feedback">Feedback</a></p>
   </footer>
 
   <!-- auth dialog -->

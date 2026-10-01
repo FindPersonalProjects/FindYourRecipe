@@ -3,6 +3,9 @@ import { DAILY_LIMIT, FEEDBACK_ISSUES_URL } from './config.js';
 import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, LIFESTYLES, DIET_LABEL, allergenNames, lifestyleNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
 import { cultureFor } from './cultures.js';
 import { convertText, defaultSystem } from './units.js';
+import { placeholderSVG } from './placeholders.js';
+import { shareResult } from './share.js';
+import { computeBadges } from './badges.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -49,6 +52,7 @@ const state = {
   draws: [],           // [{recipe_id, created_at}]
   ratings: {},         // recipe_id -> {stars, note}
   saved: new Set(),
+  photos: {},          // recipe_id -> image URL of the cook's own dish photo
   busy: false,
   timers: [],
   cookbookTab: 'pending'
@@ -61,6 +65,7 @@ async function boot() {
     const [store, idx] = await Promise.all([createStore(), loadIndex()]);
     state.store = store;
     state.index = idx.recipes;
+    state.meta = Object.fromEntries(idx.recipes.map(r => [r.id, r]));
   } catch (e) {
     console.error(e);
     $('#potCount').textContent = 'The kitchen could not open. Please refresh the page.';
@@ -80,6 +85,8 @@ async function boot() {
   wireAuth();
   wireCookMode();
   wireFeedback();
+  wireTheme();
+  wireInstall();
   setInterval(tickClock, 30000);
 
   await refreshUserData();
@@ -90,7 +97,7 @@ async function boot() {
 async function refreshUserData() {
   updateAccountButton();
   if (!state.user) {
-    state.usedToday = 0; state.draws = []; state.ratings = {}; state.saved = new Set();
+    state.usedToday = 0; state.draws = []; state.ratings = {}; state.saved = new Set(); state.photos = {};
   } else {
     try {
       const [used, hist, saved] = await Promise.all([state.store.usedToday(), state.store.history(), state.store.saved()]);
@@ -98,6 +105,7 @@ async function refreshUserData() {
       state.draws = hist.draws;
       state.ratings = Object.fromEntries(hist.ratings.map(r => [r.recipe_id, r]));
       state.saved = new Set(saved.map(s => s.recipe_id));
+      state.photos = await state.store.photos().catch(() => ({}));
     } catch (e) {
       console.error(e);
       toast('Could not load your cookbook. Check your connection.');
@@ -106,6 +114,45 @@ async function refreshUserData() {
   renderSpoons();
   renderPotCount();
   updatePendingBadge();
+  renderChallenge();
+  checkBadges({ quiet: true });
+}
+
+// ------------------------------------------------------------------ badges
+
+function currentBadges() {
+  return computeBadges({ draws: state.draws, ratings: state.ratings, meta: state.meta || {}, photos: state.photos });
+}
+
+// Remembers which badges were already earned, and celebrates new ones.
+function checkBadges({ quiet = false } = {}) {
+  if (!state.user) return;
+  const key = `fyr:badges:${state.user.id}`;
+  const known = new Set(lsGet(key, []));
+  const earned = currentBadges().filter(b => b.earned);
+  const fresh = earned.filter(b => !known.has(b.id));
+  lsSet(key, earned.map(b => b.id));
+  if (!quiet && fresh.length) {
+    const b = fresh[0];
+    setTimeout(() => toast(`${b.icon} Badge unlocked: ${b.name}!${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ''}`, 5000), 900);
+  }
+}
+
+function onRated() {
+  checkBadges();
+  renderChallenge();
+}
+
+function renderBadges() {
+  const badges = currentBadges();
+  $('#badgeCount').textContent = `${badges.filter(b => b.earned).length} of ${badges.length}`;
+  $('#badges').innerHTML = badges.map(b => `
+    <div class="badge-card ${b.earned ? '' : 'locked'}" title="${esc(b.desc)}">
+      <div class="badge-icon" aria-hidden="true">${b.icon}</div>
+      <div class="badge-name">${esc(b.name)}</div>
+      <div class="badge-desc">${esc(b.desc)}</div>
+      ${b.earned ? '' : `<div class="badge-progress" aria-label="${b.have} of ${b.need}"><div style="width:${(b.have / b.need) * 100}%"></div></div>`}
+    </div>`).join('');
 }
 
 // ------------------------------------------------------------------ routing
@@ -125,6 +172,9 @@ function route() {
     $('#view-recipe').hidden = false;
     setDocked(false, false);
     renderStaticRecipe(decodeURIComponent(id));
+  } else if (page === 'privacy') {
+    $('#view-privacy').hidden = false;
+    setDocked(false, false);
   } else if (page === 'feedback') {
     $('#view-feedback').hidden = false;
     $('[data-nav="feedback"]').setAttribute('aria-current', 'page');
@@ -331,6 +381,7 @@ function buildFilters() {
     syncFilterUI();
   });
 
+  $('#moreFilters').addEventListener('toggle', () => { $('#moreFilters').dataset.touched = '1'; });
   $$('.mode-btn').forEach(b => b.addEventListener('click', () => {
     state.mode = b.dataset.mode;
     lsSet('fyr:mode', state.mode);
@@ -376,7 +427,55 @@ function syncFilterUI() {
   if (state.filters.cuisine !== 'any' && !counts.has(state.filters.cuisine)) state.filters.cuisine = 'any';
   sel.value = state.filters.cuisine;
 
+  renderActiveFilters();
   renderPotCount();
+}
+
+const MORE_FILTERS = ['course', 'hands', 'protein', 'difficulty', 'era'];
+
+// Removable chips summarising every active filter, shown under the panel.
+function renderActiveFilters() {
+  const f = state.filters;
+  const items = [];
+  const label = (key, value) => (FILTERS[key].find(([v]) => v === value) || [, value])[1];
+  if (f.region !== 'any') items.push([`🌍 ${f.region}`, () => { f.region = 'any'; f.cuisine = 'any'; }]);
+  if (f.cuisine !== 'any') items.push([`🍽 ${f.cuisine}`, () => { f.cuisine = 'any'; }]);
+  for (const key of ['time', 'diet', ...MORE_FILTERS]) {
+    if (f[key] && f[key] !== 'any') {
+      const prefix = key === 'hands' ? 'Hands-on: ' : '';
+      items.push([prefix + label(key, f[key]), () => { f[key] = 'any'; }]);
+    }
+  }
+  for (const key of f.lifestyle || []) {
+    const l = LIFESTYLES.find(x => x[0] === key);
+    if (l) items.push([`✓ ${l[2]}`, () => { f.lifestyle = f.lifestyle.filter(k => k !== key); }]);
+  }
+  for (const key of f.avoid || []) {
+    const a = ALLERGENS.find(x => x[0] === key);
+    if (a) items.push([`🚫 ${a[2]}`, () => { f.avoid = f.avoid.filter(k => k !== key); }]);
+  }
+
+  const list = $('#activeFilters');
+  list.hidden = state.mode !== 'picky' || !items.length;
+  list.innerHTML = items.map(([text], i) =>
+    `<li><button type="button" class="active-chip" data-i="${i}" aria-label="Remove filter ${esc(text)}">${esc(text)} <span aria-hidden="true">×</span></button></li>`).join('') +
+    (items.length > 1 ? `<li><button type="button" class="link-btn" data-clear>Clear all</button></li>` : '');
+  list.onclick = e => {
+    if (e.target.closest('[data-clear]')) { state.filters = { ...DEFAULT_FILTERS }; }
+    else {
+      const b = e.target.closest('[data-i]');
+      if (!b) return;
+      items[Number(b.dataset.i)][1]();
+    }
+    saveFilters();
+    syncFilterUI();
+  };
+
+  const avoidGroup = ALLERGENS.filter(a => a[3] === 'avoid').map(a => a[0]);
+  const moreActive = MORE_FILTERS.filter(k => f[k] && f[k] !== 'any').length +
+    (f.lifestyle || []).length + (f.avoid || []).filter(k => avoidGroup.includes(k)).length;
+  $('#moreCount').textContent = moreActive ? `(${moreActive} on)` : '';
+  if (moreActive && !$('#moreFilters').dataset.touched) $('#moreFilters').open = true;
 }
 
 function activeFilters() {
@@ -416,16 +515,48 @@ function renderSpoons() {
   updateStartButton();
 }
 
+// A daily calendar reminder (.ics) works on every phone and computer, no server needed.
+function downloadReminder() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const start = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}T170000`;
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const url = location.origin + location.pathname;
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Find Your Recipe//EN', 'BEGIN:VEVENT',
+    `UID:daily-pot-${stamp}@findyourrecipe`, `DTSTAMP:${stamp}`, `DTSTART:${start}`, 'DURATION:PT15M', 'RRULE:FREQ=DAILY',
+    'SUMMARY:🍲 Your recipe pot has refilled', `DESCRIPTION:3 new mystery stirs are waiting. ${url}`, `URL:${url}`,
+    'BEGIN:VALARM', 'TRIGGER:PT0M', 'ACTION:DISPLAY', 'DESCRIPTION:Time to stir the pot!', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR'
+  ].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+  a.download = 'find-your-recipe-reminder.ics';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('Open the downloaded file to add a daily 5 pm reminder to your calendar.', 6000);
+  // Bonus: a browser notification at midnight if this tab is still open.
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+}
+
+let lastDay = new Date().toDateString();
+
 function tickClock() {
+  const today = new Date().toDateString();
+  if (today !== lastDay) {
+    lastDay = today;
+    refreshUserData();
+    if ('Notification' in window && Notification.permission === 'granted' && state.user) {
+      try { new Notification('🍲 Your pot has refilled', { body: '3 new mystery stirs are ready.' }); } catch { /* ignore */ }
+    }
+  }
   const el = $('#spoonsReset');
   if (!state.user) { el.textContent = 'Sign in to get 3 stirs a day'; return; }
   if (state.usedToday === 0) { el.textContent = 'Fresh pot: all 3 stirs are ready'; return; }
   const now = new Date();
   const midnight = new Date(now); midnight.setHours(24, 0, 0, 0);
   const mins = Math.ceil((midnight - now) / 60000);
-  el.textContent = `Refills in ${Math.floor(mins / 60)}h ${mins % 60}m`;
-  if (mins >= 24 * 60 - 1) refreshUserData();
-}
+  el.textContent = `Refills in ${Math.floor(mins / 60)}h ${mins % 60}m`;}
 
 function updateStartButton() {
   const btn = $('#startBtn');
@@ -491,6 +622,8 @@ function setDocked(on, animate = true) {
 function wireKitchen() {
   drawLadle(ladle.angle);
   $('#startBtn').addEventListener('click', startCooking);
+  $('#challengeBtn').addEventListener('click', startChallenge);
+  $('#remindBtn').addEventListener('click', downloadReminder);
   $('#potBtn').addEventListener('click', () => {
     if ($('#potStage').classList.contains('docked')) backToKitchen();
   });
@@ -501,6 +634,104 @@ function backToKitchen() {
   setBoiling(false);
   setDocked(false);
   window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+}
+
+// Docks the pot and pops the recipe card up in the kitchen.
+function serveRecipe(recipe, opts) {
+  setDocked(true);
+  if (!$('#potStage').classList.contains('boiling')) setBoiling(true);
+  const card = $('#recipeCard');
+  card.innerHTML = recipeCardHTML(recipe, opts);
+  card.hidden = false;
+  card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop');
+  wireRecipeCard(card, recipe);
+  setTimeout(() => card.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }), 150);
+}
+
+// ------------------------------------------------------------------ weekly challenge
+
+function isoWeek(d = new Date()) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const year = t.getUTCFullYear();
+  const week = Math.ceil(((t - Date.UTC(year, 0, 1)) / 86400000 + 1) / 7);
+  return `${year}-W${String(week).padStart(2, '0')}`;
+}
+
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h;
+}
+
+// Same recipe for everyone this week: the eligible recipe with the lowest hash(week + id).
+// Adding or removing other recipes never changes the pick.
+function challengeRecipeId(week = isoWeek()) {
+  let best = null, bestHash = Infinity;
+  for (const r of state.index) {
+    if (r.e || r.t > 120 || r.d === 'hard') continue;
+    const h = fnv1a(`${week}:${r.id}`);
+    if (h < bestHash) { bestHash = h; best = r.id; }
+  }
+  return best;
+}
+
+function challengeDraw(week = isoWeek()) {
+  return state.draws.find(d => d.kind === 'challenge' && d.week === week);
+}
+
+async function renderChallenge() {
+  const box = $('#challenge');
+  const week = isoWeek();
+  const id = challengeRecipeId(week);
+  if (!id) { box.hidden = true; return; }
+  box.hidden = false;
+  const now = new Date();
+  const daysLeft = 7 - ((now.getDay() + 6) % 7);           // until next Monday
+  const left = daysLeft <= 1 ? 'Last day!' : `${daysLeft} days left.`;
+  let count = 0;
+  try { count = await state.store.challengeCount(week); } catch { /* ignore */ }
+  const cooks = count === 1 ? '1 cook has' : `${count.toLocaleString()} cooks have`;
+  const joined = state.user && challengeDraw(week);
+  const mine = joined && state.ratings[joined.recipe_id];
+  const btn = $('#challengeBtn');
+  if (mine) {
+    $('#challengeText').textContent = `You gave it ${mine.stars}★. ${cooks} taken it on. ${left}`;
+    btn.textContent = 'See the results';
+  } else if (joined) {
+    $('#challengeText').textContent = `You're in! Cook it and rate it before the week ends. ${cooks} joined. ${left}`;
+    btn.textContent = 'Open my challenge';
+  } else {
+    $('#challengeText').textContent = `Everyone gets the same mystery recipe this week, and it doesn't use one of your stirs. ${count ? `${cooks} joined. ` : ''}${left}`;
+    btn.textContent = 'Take the challenge';
+  }
+}
+
+async function startChallenge() {
+  if (state.busy) return;
+  if (!state.user) { openAuth(state.store.mode === 'local' ? 'signin' : 'signup', 'Sign in to join the weekly challenge.'); return; }
+  const week = isoWeek();
+  const id = challengeDraw(week)?.recipe_id || challengeRecipeId(week);
+  state.busy = true;
+  try {
+    const firstTime = !challengeDraw(week);
+    if (firstTime) {
+      $('#recipeCard').hidden = true;
+      setDocked(false, false);
+      setBoiling(true);
+      await Promise.all([state.store.joinChallenge(id, week), wait(reduceMotion ? 300 : 1500)]);
+      state.draws.unshift({ recipe_id: id, kind: 'challenge', week, created_at: new Date().toISOString() });
+    }
+    serveRecipe(await getRecipe(id), { challenge: true });
+  } catch (e) {
+    setBoiling(false);
+    toast(e.code === 'NOT_SIGNED_IN' ? 'Please sign in first.' : 'Could not open the challenge. Try again.');
+  } finally {
+    state.busy = false;
+    renderChallenge();
+    updatePendingBadge();
+  }
 }
 
 async function startCooking() {
@@ -525,14 +756,7 @@ async function startCooking() {
     state.usedToday = res.usedToday;
     state.draws.unshift({ recipe_id: res.recipeId, created_at: new Date().toISOString() });
     const recipe = await getRecipe(res.recipeId);
-
-    setDocked(true);
-    const card = $('#recipeCard');
-    card.innerHTML = recipeCardHTML(recipe, { fresh: true });
-    card.hidden = false;
-    card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop');
-    wireRecipeCard(card, recipe);
-    setTimeout(() => card.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }), 150);
+    serveRecipe(recipe, { fresh: true });
   } catch (e) {
     setBoiling(false);
     if (e.code === 'DAILY_LIMIT') {
@@ -605,7 +829,7 @@ function starsHTML(avg) {
   return out;
 }
 
-function recipeCardHTML(r, { fresh = false } = {}) {
+function recipeCardHTML(r, { fresh = false, challenge = false } = {}) {
   const culture = cultureFor(r);
   const source = safeUrl(r.source?.url);
   const img = safeUrl(r.image);
@@ -621,7 +845,7 @@ function recipeCardHTML(r, { fresh = false } = {}) {
   const contains = allergenNames(r.allergens || 0, 'allergy');
   const alsoHas = allergenNames(r.allergens || 0, 'avoid');
   const byline = /^[\w-]+(\.[\w-]+)+$/.test(r.author || '') ? 'from' : 'by';
-  const kicker = r.era === 'vintage' && r.vintage
+  const kicker = challenge ? "🏆 This week's challenge" : r.era === 'vintage' && r.vintage
     ? `📜 A vintage recipe from ${esc(r.vintage.year)}`
     : fresh ? 'Fresh out of the pot!' : 'From your cookbook';
 
@@ -634,8 +858,12 @@ function recipeCardHTML(r, { fresh = false } = {}) {
 
   return `
     <div class="card-tape" aria-hidden="true"></div>
-    <div class="card-hero ${img ? '' : 'no-image'}">
-      ${img ? `<div class="card-image"><img src="${esc(img)}" alt="${esc(r.name)}" loading="lazy" onerror="this.parentElement.remove()"></div>` : ''}
+    <div class="card-hero">
+      <div class="card-image">
+        ${placeholderSVG(r.course)}
+        ${img ? `<img src="${esc(img)}" alt="${esc(r.name)}" loading="lazy" onerror="this.remove()">` : ''}
+        <div class="my-photo-slot"></div>
+      </div>
       <div class="card-intro">
         <p class="card-kicker">${kicker}</p>
         <h2 class="card-title">${esc(r.name)}</h2>
@@ -649,6 +877,7 @@ function recipeCardHTML(r, { fresh = false } = {}) {
           <button type="button" class="btn btn-small btn-primary cook-btn">👩‍🍳 Cook mode</button>
           <button type="button" class="btn btn-small btn-ghost copy-btn">🛒 Copy shopping list</button>
           <button type="button" class="btn btn-small btn-ghost print-btn">🖨 Print</button>
+          <button type="button" class="btn btn-small btn-ghost share-btn">📤 Share</button>
         </div>
       </div>
     </div>
@@ -682,13 +911,71 @@ function recipeCardHTML(r, { fresh = false } = {}) {
         ${safeUrl(r.youtube) ? `<p><a href="${esc(r.youtube)}" target="_blank" rel="noopener">▶ Watch a video of this recipe</a></p>` : ''}
       </section>
       <div class="rate-slot"></div>
+      <div class="photo-box">
+        <p class="photo-box-text">📷 Snap a photo of how yours turned out. Only you can see it.</p>
+        <div class="photo-actions">
+          <label class="btn btn-small btn-ghost photo-pick">
+            <span class="photo-pick-label">Add a photo</span>
+            <input type="file" accept="image/*" capture="environment" class="photo-input" hidden>
+          </label>
+          <button type="button" class="btn btn-small btn-ghost photo-remove" hidden>Remove photo</button>
+        </div>
+      </div>
       <p class="report-line"><a href="#/feedback/${encodeURIComponent(r.id)}">🚩 Report a problem with this recipe</a> (wrong measurements, confusing steps, missing allergens…)</p>
       <p class="muted" style="font-size:13px;margin-top:22px">Recipe from ${esc(r.source?.name || 'the web')}${r.license === 'CC BY-SA 4.0' ? ', shared under CC BY-SA 4.0' : ''}. Loved it or hated it? ${source ? `<a href="${esc(source)}" target="_blank" rel="noopener">Leave a review on the original page too.</a>` : ''}</p>
     </div>`;
 }
 
+// Shrinks a picked image to at most 1000px on its long side, as a JPEG.
+async function shrinkImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1000 / Math.max(bitmap.width, bitmap.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bitmap.width * scale);
+  c.height = Math.round(bitmap.height * scale);
+  c.getContext('2d').drawImage(bitmap, 0, 0, c.width, c.height);
+  return new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.8));
+}
+
+function renderMyPhoto(card, r) {
+  const url = state.photos[r.id];
+  $('.my-photo-slot', card).innerHTML = url
+    ? `<img class="my-photo" src="${esc(url)}" alt="Your photo of ${esc(r.name)}"><span class="my-photo-badge">📷 Your dish</span>`
+    : '';
+  $('.photo-pick-label', card).textContent = url ? 'Replace photo' : 'Add a photo';
+  $('.photo-remove', card).hidden = !url;
+}
+
+function wirePhoto(card, r) {
+  renderMyPhoto(card, r);
+  $('.photo-input', card).addEventListener('change', async e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!state.user) { openAuth('signin'); return; }
+    try {
+      const blob = await shrinkImage(file);
+      await state.store.setPhoto(r.id, blob);
+      state.photos = await state.store.photos();
+      renderMyPhoto(card, r);
+      toast('Photo saved to your cookbook 📷');
+      checkBadges();
+    } catch (err) {
+      toast(err.message && err.code === 'ERROR' ? err.message : 'Could not save that photo. Try a different one.');
+    }
+  });
+  $('.photo-remove', card).addEventListener('click', async () => {
+    try {
+      await state.store.removePhoto(r.id);
+      delete state.photos[r.id];
+      renderMyPhoto(card, r);
+    } catch { toast('Could not remove the photo.'); }
+  });
+}
+
 function wireRecipeCard(card, r) {
   renderRatingArea(card, r);
+  wirePhoto(card, r);
 
   $('.save-btn', card).addEventListener('click', async e => {
     if (!state.user) { openAuth('signin'); return; }
@@ -732,7 +1019,20 @@ function wireRecipeCard(card, r) {
     if (u || s) renderAmounts(card, r, scale, checked);
   });
 
-  card.addEventListener('click', e => {
+  card.addEventListener('click', async e => {
+    const share = e.target.closest('.share-btn');
+    if (share) {
+      share.disabled = true;
+      const mine = state.ratings[r.id]?.stars || null;
+      const stats = card._stats;
+      const v = !mine ? '' : stats && stats.count > 1 ? verdict(stats.avg)[0] : 'First taster! 🥇';
+      try {
+        const how = await shareResult(r, { mine, crowd: stats, verdict: v });
+        if (how === 'downloaded') toast('Image saved, and the caption is copied. Post it anywhere!');
+      } catch { toast('Could not make the image. Try again.'); }
+      share.disabled = false;
+      return;
+    }
     const chip = e.target.closest('.timer-chip');
     if (chip) startTimer(Number(chip.dataset.secs), `${r.name}: ${chip.textContent.replace('⏲', '').trim()}`);
   });
@@ -758,6 +1058,7 @@ async function renderRatingArea(card, r) {
   rateSlot.innerHTML = `<div class="reveal"><p class="muted">Loading the community rating…</p></div>`;
   try {
     const stats = (await state.store.revealed([r.id]))[r.id];
+    card._stats = stats;
     rateSlot.innerHTML = revealHTML(r, mine.stars, stats);
   } catch {
     rateSlot.innerHTML = '';
@@ -791,7 +1092,9 @@ function wireRateBox(card, r) {
     btn.disabled = true;
     try {
       const stats = await state.store.rate(r.id, stars, fd.get('note'));
-      state.ratings[r.id] = { recipe_id: r.id, stars, note: fd.get('note') };
+      card._stats = stats;
+      state.ratings[r.id] = { recipe_id: r.id, stars, note: fd.get('note'), created_at: new Date().toISOString() };
+      onRated(r);
       updatePendingBadge();
       $('.rating-slot', card).innerHTML = `<div class="mystery"><span class="mystery-stars" style="color:var(--butter)">${'★'.repeat(stars)}</span><p>You gave this <strong>${stars} star${stars === 1 ? '' : 's'}</strong>.</p></div>`;
       const slot = $('.rate-slot', card);
@@ -816,6 +1119,7 @@ function verdict(avg) {
 function revealHTML(r, mine, stats) {
   const source = safeUrl(r.source?.url);
   const rateSrc = source ? `<a class="btn btn-small btn-ghost" href="${esc(source)}" target="_blank" rel="noopener">Rate it on ${esc(r.source.name)} too ↗</a>` : '';
+  const shareBtn = `<button type="button" class="btn btn-small btn-primary share-btn">📤 Share my result</button>`;
   if (!stats || stats.count <= 1) {
     return `
       <div class="reveal">
@@ -823,7 +1127,7 @@ function revealHTML(r, mine, stats) {
         <div class="reveal-stars" aria-label="${mine} stars">${starsHTML(mine)}</div>
         <p class="reveal-num">You're the first cook to rate this one</p>
         <p class="reveal-compare">Your ${mine}-star rating is its first. Future cooks will be gambling on your verdict.</p>
-        ${rateSrc}
+        <div class="reveal-actions">${shareBtn}${rateSrc}</div>
       </div>`;
   }
   const [title, line] = verdict(stats.avg);
@@ -838,7 +1142,7 @@ function revealHTML(r, mine, stats) {
       <div class="reveal-stars" aria-label="${stats.avg} out of 5">${starsHTML(stats.avg)}</div>
       <p class="reveal-num">${stats.avg.toFixed(1)} / 5 from ${stats.count} cooks</p>
       <p class="reveal-compare">${esc(line)} You gave it ${mine}★. ${esc(cmp)}</p>
-      ${rateSrc}
+      <div class="reveal-actions">${shareBtn}${rateSrc}</div>
     </div>`;
 }
 
@@ -849,6 +1153,8 @@ async function renderCookbook() {
   if (!state.user) {
     $('#cookbookWho').textContent = '';
     $('#stats').innerHTML = '';
+    $('#badges').innerHTML = '';
+    $('#badgeCount').textContent = '';
     list.innerHTML = `<div class="empty"><span class="big">📖</span>Sign in to see your cookbook.<br><br><button class="btn btn-primary" id="cbSignIn">Sign in</button></div>`;
     $('#cbSignIn').addEventListener('click', () => openAuth('signin'));
     return;
@@ -864,6 +1170,7 @@ async function renderCookbook() {
     [avgMine, 'Your average rating'],
     [state.saved.size, 'Saved favorites']
   ].map(([n, l]) => `<div class="stat"><div class="stat-num">${n}</div><div class="stat-label">${l}</div></div>`).join('');
+  renderBadges();
 
   $$('.tab').forEach(t => {
     t.setAttribute('aria-selected', String(t.dataset.tab === state.cookbookTab));
@@ -899,10 +1206,10 @@ async function renderCookbook() {
     const stars = mine
       ? `<div class="mini-stars">You <span class="s">${'★'.repeat(mine.stars)}</span>${crowd && crowd.count > 1 ? ` · Crowd <span class="s">★</span> ${crowd.avg.toFixed(1)}` : ''}</div>`
       : `<div class="mini-stars muted">Rating hidden ? ? ?</div>`;
-    const img = safeUrl(r.image);
+    const img = state.photos[r.id] || safeUrl(r.image);
     return `
       <a class="mini" href="#/recipe/${encodeURIComponent(r.id)}">
-        <div class="mini-img">${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.replaceWith('🍲')">` : '🍲'}</div>
+        <div class="mini-img">${placeholderSVG(r.course, { label: false })}${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
         <div class="mini-body">
           <p class="mini-title">${esc(r.name)}</p>
           <p class="mini-meta">${esc(r.cuisine || 'Global')} · ${esc(formatMinutes(r.minutes))}</p>
@@ -927,6 +1234,64 @@ async function renderStaticRecipe(id) {
   } catch {
     card.innerHTML = `<p class="empty">Could not load this recipe.</p>`;
   }
+}
+
+// ------------------------------------------------------------------ install as an app
+
+function wireInstall() {
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  const btn = $('#installBtn');
+  let prompt = null;
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    prompt = e;
+    btn.hidden = false;
+  });
+  btn.addEventListener('click', async () => {
+    if (prompt) {
+      prompt.prompt();
+      await prompt.userChoice.catch(() => {});
+      prompt = null;
+      btn.hidden = true;
+    }
+  });
+  window.addEventListener('appinstalled', () => { btn.hidden = true; toast('Installed! Find Your Recipe is on your home screen.'); });
+  // iPhone/iPad Safari has no install prompt; show a hint instead (once).
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  if (isIOS && !standalone && !lsGet('fyr:iosHint', false)) {
+    setTimeout(() => toast('Tip: tap Share, then "Add to Home Screen" to install Find Your Recipe.', 7000), 4000);
+    lsSet('fyr:iosHint', true);
+  }
+}
+
+// ------------------------------------------------------------------ theme
+
+const THEMES = { auto: ['🌓', 'match my device'], light: ['☀️', 'light'], dark: ['🌙', 'dark'] };
+
+function applyTheme(theme) {
+  if (theme === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  const [icon, label] = THEMES[theme];
+  const b = $('#themeBtn');
+  b.textContent = icon;
+  b.title = b.ariaLabel = `Theme: ${label} (click to change)`;
+}
+
+function wireTheme() {
+  let theme = 'auto';
+  try { theme = localStorage.getItem('fyr:theme') || 'auto'; } catch { /* ignore */ }
+  if (!THEMES[theme]) theme = 'auto';
+  applyTheme(theme);
+  $('#themeBtn').addEventListener('click', () => {
+    const order = ['auto', 'light', 'dark'];
+    theme = order[(order.indexOf(theme) + 1) % order.length];
+    try { localStorage.setItem('fyr:theme', theme); } catch { /* ignore */ }
+    applyTheme(theme);
+    toast(`Theme: ${THEMES[theme][1]}`);
+  });
 }
 
 // ------------------------------------------------------------------ feedback

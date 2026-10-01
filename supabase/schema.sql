@@ -19,6 +19,10 @@ create table if not exists public.draws (
   created_at timestamptz not null default now()
 );
 create index if not exists draws_user_day on public.draws (user_id, draw_day);
+-- kind = 'draw' (uses one of the 3 daily stirs) or 'challenge' (the weekly challenge, free).
+alter table public.draws add column if not exists kind text not null default 'draw' check (kind in ('draw', 'challenge'));
+alter table public.draws add column if not exists week text;
+create unique index if not exists draws_one_challenge_per_week on public.draws (user_id, week) where kind = 'challenge';
 
 create table if not exists public.saved_recipes (
   user_id    uuid not null references auth.users on delete cascade default auth.uid(),
@@ -98,7 +102,7 @@ end $$;
 create or replace function public.draw_status(tz text default 'UTC')
 returns int language sql stable security definer set search_path = public as $$
   select count(*)::int from draws
-  where user_id = auth.uid() and draw_day = fyr_today(tz);
+  where user_id = auth.uid() and draw_day = fyr_today(tz) and kind = 'draw';
 $$;
 
 -- Draws one recipe at random (server side) from the filtered candidates.
@@ -118,7 +122,7 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_uid::text));
-  select count(*) into v_used from draws d where d.user_id = v_uid and d.draw_day = v_day;
+  select count(*) into v_used from draws d where d.user_id = v_uid and d.draw_day = v_day and d.kind = 'draw';
   if v_used >= 3 then raise exception 'DAILY_LIMIT'; end if;
 
   v_pick := candidates[1 + floor(random() * array_length(candidates, 1))::int];
@@ -159,6 +163,47 @@ language sql stable security definer set search_path = public as $$
                 where mine.user_id = auth.uid() and mine.recipe_id = r.recipe_id)
   group by r.recipe_id;
 $$;
+
+-- ------------------------------------------------------------------ dish photos (Storage)
+-- Private bucket; each user can only read and write files in their own folder: <user id>/<recipe id>.jpg
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('dish-photos', 'dish-photos', false, 2097152, array['image/jpeg'])
+on conflict (id) do nothing;
+
+drop policy if exists "own dish photos read"   on storage.objects;
+drop policy if exists "own dish photos write"  on storage.objects;
+drop policy if exists "own dish photos update" on storage.objects;
+drop policy if exists "own dish photos delete" on storage.objects;
+create policy "own dish photos read" on storage.objects for select to authenticated
+  using (bucket_id = 'dish-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own dish photos write" on storage.objects for insert to authenticated
+  with check (bucket_id = 'dish-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own dish photos update" on storage.objects for update to authenticated
+  using (bucket_id = 'dish-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own dish photos delete" on storage.objects for delete to authenticated
+  using (bucket_id = 'dish-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- Weekly challenge: one per user per week, does not count toward the daily limit.
+create or replace function public.join_challenge(p_recipe_id text, p_week text)
+returns void language plpgsql volatile security definer set search_path = public as $$
+declare v_uid uuid := auth.uid();
+begin
+  if v_uid is null then raise exception 'NOT_SIGNED_IN'; end if;
+  if p_week !~ '^\d{4}-W\d{2}$' or char_length(p_recipe_id) > 100 then raise exception 'BAD_CHALLENGE'; end if;
+  insert into draws (user_id, recipe_id, draw_day, kind, week)
+  values (v_uid, p_recipe_id, current_date, 'challenge', p_week)
+  on conflict do nothing;
+end $$;
+
+-- How many cooks have taken this week's challenge.
+create or replace function public.challenge_count(p_week text)
+returns int language sql stable security definer set search_path = public as $$
+  select count(*)::int from draws where kind = 'challenge' and week = p_week;
+$$;
+
+revoke all on function public.join_challenge(text, text)         from public, anon;
+grant execute on function public.join_challenge(text, text)      to authenticated;
+grant execute on function public.challenge_count(text)           to anon, authenticated;
 
 revoke all on function public.draw_recipe(text[], text)         from public, anon;
 revoke all on function public.rate_recipe(text, int, text)       from public, anon;
