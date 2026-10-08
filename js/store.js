@@ -58,26 +58,51 @@ class SupabaseStore {
     return { id: this.session.user.id, email: this.session.user.email, name: this.profile?.display_name || 'Home Cook' };
   }
 
-  async signUp({ email, password, name }) {
+  async signUp({ email, password, name, captchaToken }) {
     const { data, error } = await this.sb.auth.signUp({
       email, password,
-      options: { data: { display_name: name }, emailRedirectTo: location.origin + location.pathname }
+      options: { data: { display_name: name }, emailRedirectTo: location.origin + location.pathname, captchaToken }
     });
     if (error) throw friendly(error);
     return { needsConfirm: !data.session };
   }
 
-  async signIn({ email, password }) {
-    const { error } = await this.sb.auth.signInWithPassword({ email, password });
+  async signIn({ email, password, captchaToken }) {
+    const { error } = await this.sb.auth.signInWithPassword({ email, password, options: { captchaToken } });
     if (error) throw friendly(error);
   }
 
-  async resetPassword(email) {
-    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  async resetPassword(email, captchaToken) {
+    const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname, captchaToken });
     if (error) throw friendly(error);
   }
 
   async signOut() { await this.sb.auth.signOut(); }
+
+  async changePassword(password) {
+    const { error } = await this.sb.auth.updateUser({ password });
+    if (error) throw friendly(error);
+  }
+
+  // Everything we hold about the signed-in cook, as plain JSON.
+  async exportData() {
+    const [hist, saved, fb] = await Promise.all([this.history(), this.saved(), this.photos()]);
+    return {
+      exported_at: new Date().toISOString(),
+      account: { email: this.session.user.email, name: this.profile?.display_name, created_at: this.session.user.created_at },
+      draws: hist.draws, ratings: hist.ratings, saved,
+      photos: Object.keys(fb).map(id => ({ recipe_id: id, note: 'Download links expire after an hour.', url: fb[id] }))
+    };
+  }
+
+  async deleteAccount() {
+    const uid = this.session.user.id;
+    const { data: files } = await this.sb.storage.from('dish-photos').list(uid, { limit: 1000 });
+    if (files?.length) await this.sb.storage.from('dish-photos').remove(files.map(f => `${uid}/${f.name}`));
+    const { error } = await this.sb.rpc('delete_my_account');
+    if (error) throw friendly(error);
+    await this.sb.auth.signOut();
+  }
 
   async usedToday() {
     const { data, error } = await this.sb.rpc('draw_status', { tz: tz() });
@@ -215,6 +240,25 @@ class LocalStore {
   async signUp(args) { await this.signIn(args); return { needsConfirm: false }; }
   async resetPassword() {}
   async signOut() { this.state.current = null; this.#emit(); }
+
+  async changePassword() { throw new StoreError('ERROR', 'Demo accounts have no password.'); }
+
+  async exportData() {
+    const me = this.#me();
+    return {
+      exported_at: new Date().toISOString(),
+      account: { name: me.name, mode: 'demo (this browser only)' },
+      draws: me.draws, ratings: Object.entries(me.ratings).map(([recipe_id, r]) => ({ recipe_id, ...r })), saved: me.saved,
+      photos: Object.entries(await this.photos()).map(([recipe_id, url]) => ({ recipe_id, url }))
+    };
+  }
+
+  async deleteAccount() {
+    for (const id of Object.keys(await this.photos())) await this.removePhoto(id);
+    delete this.state.users[this.state.current];
+    this.state.current = null;
+    this.#emit();
+  }
 
   async usedToday() {
     const today = localDay();

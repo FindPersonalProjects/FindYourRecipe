@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Find Your Recipe tests</title>
+  <style>
+    body { font: 15px/1.5 ui-monospace, Consolas, monospace; margin: 24px; background: #fff; color: #222; }
+    pre { white-space: pre-wrap; }
+    .fail { color: #b3261e; } .pass { color: #2e7d32; }
+  </style>
+</head>
+<body>
+  <h1>Find Your Recipe tests</h1>
+  <pre id="out">Running…</pre>
+  <script type="module">
+    import { runCases } from './cases.js';
+    const out = document.getElementById('out');
+    out.textContent = '';
+    const failed = await runCases(line => {
+      const span = document.createElement('span');
+      span.className = line.startsWith('✘') ? 'fail' : line.startsWith('✔') ? 'pass' : '';
+      span.textContent = line + '\n';
+      out.append(span);
+    });
+    document.title = failed ? `✘ ${failed} failing` : '✔ all tests pass';
+    window.testResult = failed;
+  </script>
+</body>
+</html>

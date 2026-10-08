@@ -1374,7 +1374,7 @@ foreach ($r in $recipes) {
   $json = $r | ConvertTo-Json -Depth 8 -Compress
   [IO.File]::WriteAllText((Join-Path $RecDir "$($r.id).json"), $json, $Utf8)
   [void]$index.Add([ordered]@{
-    id = $r.id; n = $r.name; c = $r.cuisine; g = $r.region; k = $r.course; p = $r.protein
+    id = $r.id; c = $r.cuisine; g = $r.region; k = $r.course; p = $r.protein
     t = $r.minutes; h = $r.time.prep + $r.time.cook; d = $r.difficulty; v = $r.diet; x = $r.allergens
     y = $r.lifestyle; e = $(if ($r.era -eq 'vintage') { 1 } else { 0 })
   })

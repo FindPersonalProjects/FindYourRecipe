@@ -1,10 +1,10 @@
 // Offline support. The site itself is fetched fresh when online (so new deploys show up at once)
 // and falls back to the cached copy offline. Recipe data is served from cache and refreshed in the background.
-const VERSION = 'fyr-v1';
+const VERSION = 'fyr-v2';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png',
   'js/app.js', 'js/store.js', 'js/data.js', 'js/config.js', 'js/cultures.js', 'js/units.js',
-  'js/placeholders.js', 'js/share.js', 'js/badges.js', 'data/index.json'
+  'js/placeholders.js', 'js/share.js', 'js/badges.js', 'js/week.js', 'data/index.json'
 ];
 
 self.addEventListener('install', e => {

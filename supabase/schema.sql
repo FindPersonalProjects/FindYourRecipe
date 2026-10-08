@@ -183,6 +183,17 @@ create policy "own dish photos update" on storage.objects for update to authenti
 create policy "own dish photos delete" on storage.objects for delete to authenticated
   using (bucket_id = 'dish-photos' and (storage.foldername(name))[1] = auth.uid()::text);
 
+-- Self-serve account deletion. Draws, ratings, saves and the profile are removed by
+-- "on delete cascade"; feedback is kept but unlinked. The app removes photos first.
+create or replace function public.delete_my_account()
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'NOT_SIGNED_IN'; end if;
+  delete from auth.users where id = auth.uid();
+end $$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
 -- Weekly challenge: one per user per week, does not count toward the daily limit.
 create or replace function public.join_challenge(p_recipe_id text, p_week text)
 returns void language plpgsql volatile security definer set search_path = public as $$

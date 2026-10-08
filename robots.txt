@@ -1,0 +1,9 @@
+# Search engines only read robots.txt at the root of a domain, so this takes effect
+# once the site is on its own domain (see scripts/set-domain.ps1).
+User-agent: *
+Allow: /
+Disallow: /data/
+Disallow: /scripts/
+Disallow: /supabase/
+
+Sitemap: https://findpersonalprojects.github.io/FindYourRecipe/sitemap.xml

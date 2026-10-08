@@ -1,11 +1,12 @@
 import { createStore } from './store.js';
-import { DAILY_LIMIT, FEEDBACK_ISSUES_URL } from './config.js';
+import { DAILY_LIMIT, FEEDBACK_ISSUES_URL, TURNSTILE_SITE_KEY, GOATCOUNTER_CODE } from './config.js';
 import { loadIndex, getRecipe, FILTERS, DEFAULT_FILTERS, ALLERGENS, LIFESTYLES, DIET_LABEL, allergenNames, lifestyleNames, matches, regionsAndCuisines, formatMinutes } from './data.js';
 import { cultureFor } from './cultures.js';
 import { convertText, defaultSystem } from './units.js';
 import { placeholderSVG } from './placeholders.js';
 import { shareResult } from './share.js';
 import { computeBadges } from './badges.js';
+import { isoWeek, pickChallenge } from './week.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -87,6 +88,7 @@ async function boot() {
   wireFeedback();
   wireTheme();
   wireInstall();
+  startAnalytics();
   setInterval(tickClock, 30000);
 
   await refreshUserData();
@@ -172,8 +174,8 @@ function route() {
     $('#view-recipe').hidden = false;
     setDocked(false, false);
     renderStaticRecipe(decodeURIComponent(id));
-  } else if (page === 'privacy') {
-    $('#view-privacy').hidden = false;
+  } else if (['privacy', 'about', 'terms', 'credits'].includes(page)) {
+    $(`#view-${page}`).hidden = false;
     setDocked(false, false);
   } else if (page === 'feedback') {
     $('#view-feedback').hidden = false;
@@ -186,6 +188,7 @@ function route() {
     if (!$('#recipeCard').hidden) setDocked(true, false);
   }
   window.scrollTo({ top: 0 });
+  trackPage();
 }
 
 // ------------------------------------------------------------------ account
@@ -218,9 +221,89 @@ function pendingIds() {
 
 let authMode = 'signin';
 
+// Cloudflare Turnstile spam check, only when a site key is configured and real accounts are on.
+let captchaToken = null;
+let turnstileLoad = null;
+
+function mountCaptcha() {
+  captchaToken = null;
+  const slot = $('.captcha-slot');
+  if (!slot || !TURNSTILE_SITE_KEY || state.store.mode === 'local') return;
+  turnstileLoad ||= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.append(s);
+  });
+  turnstileLoad.then(() => {
+    window.turnstile.render(slot, {
+      sitekey: TURNSTILE_SITE_KEY,
+      theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'auto',
+      callback: t => { captchaToken = t; },
+      'expired-callback': () => { captchaToken = null; }
+    });
+  }).catch(() => { slot.textContent = 'The spam check could not load. Check your connection and try again.'; });
+}
+
+const AGREE_HTML =`<label class="agree"><input type="checkbox" name="agree" required>
+  <span>I'm at least 13 and agree to the <a href="#/terms" target="_blank">Terms</a> and <a href="#/privacy" target="_blank">Privacy</a> notice.</span></label>`;
+
+function downloadJSON(data, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// Change password / download data / delete account, inside the account dialog.
+async function onAccountAction(action) {
+  const panel = $('.account-panel');
+  const err = $('#authError');
+  err.textContent = '';
+  if (action === 'export') {
+    try {
+      downloadJSON(await state.store.exportData(), `find-your-recipe-data-${new Date().toISOString().slice(0, 10)}.json`);
+      toast('Your data is downloading.');
+    } catch { err.textContent = 'Could not export your data. Try again.'; }
+    return;
+  }
+  panel.hidden = false;
+  if (action === 'password') {
+    panel.innerHTML = `
+      <label class="field"><span>New password <span class="legend-note">(8+ characters)</span></span>
+        <input type="password" id="newPassword" minlength="8" autocomplete="new-password"></label>
+      <button type="button" class="btn btn-small btn-primary" data-account="password-save">Save new password</button>`;
+    $('#newPassword').focus();
+  } else if (action === 'password-save') {
+    const pw = $('#newPassword').value;
+    if (pw.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
+    try { await state.store.changePassword(pw); panel.hidden = true; toast('Password changed.'); }
+    catch (e) { err.textContent = e.message || 'Could not change the password.'; }
+  } else if (action === 'delete') {
+    panel.innerHTML = `
+      <p class="danger-text"><strong>This permanently deletes your account,</strong> ratings, saved recipes, challenge history and dish photos. It can't be undone. Consider downloading your data first.</p>
+      <label class="field"><span>Type DELETE to confirm</span><input id="deleteConfirm" autocomplete="off"></label>
+      <button type="button" class="btn btn-small danger-solid" data-account="delete-confirm">Delete everything</button>`;
+    $('#deleteConfirm').focus();
+  } else if (action === 'delete-confirm') {
+    if ($('#deleteConfirm').value.trim() !== 'DELETE') { err.textContent = 'Type DELETE in capitals to confirm.'; return; }
+    try {
+      await state.store.deleteAccount();
+      $('#authDialog').close();
+      toast('Your account and data have been deleted.');
+    } catch (e) { err.textContent = e.message || 'Could not delete the account. Try again or contact us.'; }
+  }
+}
+
 function wireAuth() {
   $('#accountBtn').addEventListener('click', () => openAuth(state.user ? 'account' : 'signin'));
   $('#authForm').addEventListener('submit', onAuthSubmit);
+  $('.auth-fields').addEventListener('click', e => {
+    const b = e.target.closest('[data-account]');
+    if (b) onAccountAction(b.dataset.account);
+  });
   $('#authSwitch').addEventListener('click', e => {
     const m = e.target.closest('[data-auth]');
     if (m) { e.preventDefault(); openAuth(m.dataset.auth); }
@@ -237,13 +320,20 @@ function openAuth(mode, reason) {
   if (mode === 'account') {
     $('#authTitle').textContent = `Hi, ${state.user.name}!`;
     $('#authSub').textContent = local ? 'You are cooking in demo mode on this browser.' : `Signed in as ${state.user.email}`;
-    fields.innerHTML = '';
+    fields.innerHTML = `
+      <div class="account-actions">
+        ${local ? '' : `<button type="button" class="btn btn-small btn-ghost" data-account="password">🔑 Change password</button>`}
+        <button type="button" class="btn btn-small btn-ghost" data-account="export">⬇️ Download my data</button>
+        <button type="button" class="btn btn-small btn-ghost danger" data-account="delete">🗑 Delete my account</button>
+      </div>
+      <div class="account-panel" hidden></div>`;
     $('#authSubmit').textContent = 'Sign out';
     sw.innerHTML = '';
   } else if (local) {
     $('#authTitle').textContent = 'Pull up a chair';
     $('#authSub').textContent = reason || 'Pick a cook name to start stirring. (Demo mode: saved in this browser only.)';
-    fields.innerHTML = `<label class="field"><span>Cook name</span><input name="name" required maxlength="40" autocomplete="nickname" placeholder="e.g. Grandma Rosa"></label>`;
+    fields.innerHTML = `<label class="field"><span>Cook name</span><input name="name" required maxlength="40" autocomplete="nickname" placeholder="e.g. Grandma Rosa"></label>
+      ${AGREE_HTML}`;
     $('#authSubmit').textContent = 'Start cooking';
     sw.innerHTML = '';
   } else if (mode === 'signup') {
@@ -252,13 +342,15 @@ function openAuth(mode, reason) {
     fields.innerHTML = `
       <label class="field"><span>Cook name</span><input name="name" required maxlength="40" autocomplete="nickname"></label>
       <label class="field"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
-      <label class="field"><span>Password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>`;
+      <label class="field"><span>Password <span class="legend-note">(8+ characters)</span></span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      ${AGREE_HTML}
+      <div class="captcha-slot"></div>`;
     $('#authSubmit').textContent = 'Create account';
     sw.innerHTML = `Already have an account? <a href="#" data-auth="signin">Sign in</a>`;
   } else if (mode === 'reset') {
     $('#authTitle').textContent = 'Forgot your password?';
     $('#authSub').textContent = 'We will email you a link to reset it.';
-    fields.innerHTML = `<label class="field"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>`;
+    fields.innerHTML = `<label class="field"><span>Email</span><input name="email" type="email" required autocomplete="email"></label><div class="captcha-slot"></div>`;
     $('#authSubmit').textContent = 'Send reset link';
     sw.innerHTML = `<a href="#" data-auth="signin">Back to sign in</a>`;
   } else {
@@ -266,10 +358,11 @@ function openAuth(mode, reason) {
     $('#authSub').textContent = reason || 'Sign in to stir the pot, save recipes and keep your cookbook.';
     fields.innerHTML = `
       <label class="field"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
-      <label class="field"><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>`;
+      <label class="field"><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label><div class="captcha-slot"></div>`;
     $('#authSubmit').textContent = 'Sign in';
     sw.innerHTML = `New here? <a href="#" data-auth="signup">Create an account</a> · <a href="#" data-auth="reset">Forgot password?</a>`;
   }
+  mountCaptcha();
   const dlg = $('#authDialog');
   if (!dlg.open) dlg.showModal();
   $('input', fields)?.focus();
@@ -289,7 +382,7 @@ async function onAuthSubmit(e) {
       toast('Signed out. See you at the stove!');
       return;
     }
-    const args = Object.fromEntries(form);
+    const args = { ...Object.fromEntries(form), captchaToken };
     if (authMode === 'signup') {
       const { needsConfirm } = await state.store.signUp(args);
       if (needsConfirm) {
@@ -301,7 +394,7 @@ async function onAuthSubmit(e) {
         return;
       }
     } else if (authMode === 'reset') {
-      await state.store.resetPassword(args.email);
+      await state.store.resetPassword(args.email, captchaToken);
       toast('Reset link sent. Check your email.');
       openAuth('signin');
       return;
@@ -315,6 +408,8 @@ async function onAuthSubmit(e) {
     toast(`Welcome to the kitchen, ${state.store.user()?.name || 'chef'}!`);
   } catch (err) {
     $('#authError').textContent = err.message || 'Something went wrong.';
+    // Turnstile tokens work once; get a fresh one for the next try.
+    if (window.turnstile && $('.captcha-slot')) { try { window.turnstile.reset($('.captcha-slot')); } catch { /* ignore */ } captchaToken = null; }
   } finally {
     btn.disabled = false;
   }
@@ -650,31 +745,8 @@ function serveRecipe(recipe, opts) {
 
 // ------------------------------------------------------------------ weekly challenge
 
-function isoWeek(d = new Date()) {
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = t.getUTCDay() || 7;
-  t.setUTCDate(t.getUTCDate() + 4 - day);
-  const year = t.getUTCFullYear();
-  const week = Math.ceil(((t - Date.UTC(year, 0, 1)) / 86400000 + 1) / 7);
-  return `${year}-W${String(week).padStart(2, '0')}`;
-}
-
-function fnv1a(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h;
-}
-
-// Same recipe for everyone this week: the eligible recipe with the lowest hash(week + id).
-// Adding or removing other recipes never changes the pick.
 function challengeRecipeId(week = isoWeek()) {
-  let best = null, bestHash = Infinity;
-  for (const r of state.index) {
-    if (r.e || r.t > 120 || r.d === 'hard') continue;
-    const h = fnv1a(`${week}:${r.id}`);
-    if (h < bestHash) { bestHash = h; best = r.id; }
-  }
-  return best;
+  return pickChallenge(state.index, week);
 }
 
 function challengeDraw(week = isoWeek()) {
@@ -921,6 +993,10 @@ function recipeCardHTML(r, { fresh = false, challenge = false } = {}) {
           <button type="button" class="btn btn-small btn-ghost photo-remove" hidden>Remove photo</button>
         </div>
       </div>
+      <p class="safety-note">🧤 <strong>Cook safely:</strong> ${r.era === 'vintage'
+        ? `this recipe is from ${esc(r.vintage?.year || 'the 1800s')}, before modern food-safety advice. Cook meat, fish and eggs thoroughly and skip any old curing or preserving steps you're unsure about.`
+        : 'cook meat, poultry, fish and eggs all the way through, and keep raw and cooked food apart.'}
+        Allergen tags are automatic guesses, so read every ingredient if you have an allergy. <a href="#/terms">Terms</a></p>
       <p class="report-line"><a href="#/feedback/${encodeURIComponent(r.id)}">🚩 Report a problem with this recipe</a> (wrong measurements, confusing steps, missing allergens…)</p>
       <p class="muted" style="font-size:13px;margin-top:22px">Recipe from ${esc(r.source?.name || 'the web')}${r.license === 'CC BY-SA 4.0' ? ', shared under CC BY-SA 4.0' : ''}. Loved it or hated it? ${source ? `<a href="${esc(source)}" target="_blank" rel="noopener">Leave a review on the original page too.</a>` : ''}</p>
     </div>`;
@@ -1234,6 +1310,27 @@ async function renderStaticRecipe(id) {
   } catch {
     card.innerHTML = `<p class="empty">Could not load this recipe.</p>`;
   }
+}
+
+// ------------------------------------------------------------------ analytics (optional, cookie-free)
+
+function startAnalytics() {
+  if (!GOATCOUNTER_CODE) return;
+  $('#privacyAnalytics').innerHTML = 'We count page visits with <a href="https://www.goatcounter.com/help/privacy" target="_blank" rel="noopener">GoatCounter</a>, which uses no cookies and collects no personal data.';
+  window.goatcounter = { no_onload: true };
+  const s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://gc.zgo.at/count.js';
+  s.dataset.goatcounter = `https://${GOATCOUNTER_CODE}.goatcounter.com/count`;
+  s.onload = trackPage;
+  document.head.append(s);
+}
+
+// Hash routes (#/cookbook, #/recipe/...) count as pages; recipe ids are left out.
+function trackPage() {
+  if (!GOATCOUNTER_CODE || !window.goatcounter?.count) return;
+  const page = (location.hash.split('/')[1] || 'kitchen');
+  window.goatcounter.count({ path: `/${page}`, title: page });
 }
 
 // ------------------------------------------------------------------ install as an app

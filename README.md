@@ -67,6 +67,29 @@ Then open http://localhost:8080.
 
 Pushing to `main` deploys to GitHub Pages through `.github/workflows/jekyll-gh-pages.yml`. In the repo's **Settings → Pages**, set **Source** to **GitHub Actions**.
 
+## Your own domain
+
+1. Buy a domain (any registrar: Cloudflare, Namecheap, Porkbun, Google Domains' successor Squarespace…).
+2. Run `powershell -ExecutionPolicy Bypass -File scripts\set-domain.ps1 -Domain yourdomain.com`, then commit and push.
+   It updates every address in the site and writes the `CNAME` file.
+3. At your registrar, add DNS records for the bare domain: four `A` records pointing to `185.199.108.153`, `185.199.109.153`,
+   `185.199.110.153` and `185.199.111.153`, and a `CNAME` record for `www` pointing to `findpersonalprojects.github.io`.
+4. In the repo's **Settings → Pages**, enter the domain under **Custom domain**, wait for the check, then tick **Enforce HTTPS**.
+5. If Supabase is connected, update **Authentication → URL Configuration → Site URL** to the new address.
+
+## Spam protection and analytics (optional)
+
+- **Spam check on sign-up:** create a free Cloudflare Turnstile widget for your domain, put the site key in `TURNSTILE_SITE_KEY`
+  in `js/config.js`, and enable **Captcha protection** in Supabase (Authentication → Attack Protection) with the secret key.
+- **Visitor counts without cookies:** sign up at goatcounter.com and put your code in `GOATCOUNTER_CODE`. The privacy page
+  updates itself to mention it.
+
+## Tests
+
+`tests/` holds unit tests for unit conversion, filters, the weekly challenge and badges, plus a data check that every recipe
+in the index has its file. They run automatically on GitHub (Actions → Tests) on every push. To run them yourself, open
+`tests/index.html` through the local server, or run `node tests/run.mjs` if you have Node.js.
+
 ## Reading feedback
 
 The **Feedback** page (and the "Report a problem with this recipe" link on every card) saves messages to the `feedback` table once Supabase is connected: open your Supabase project → **Table Editor** → `feedback`. Visitors can send feedback but can't read anyone else's.
